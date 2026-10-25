@@ -58,6 +58,19 @@ class ZipArchiveSupportTest {
         assertTrue(error is IOException)
     }
 
+    @Test
+    fun extractionRejectsNonZipInput() {
+        val destination = createTempDir(prefix = "jarvision-zip-invalid-")
+        try {
+            val error = runCatching {
+                ZipArchiveSupport.extract(ByteArrayInputStream("not a zip".toByteArray()), destination)
+            }.exceptionOrNull()
+            assertTrue(error is IOException)
+        } finally {
+            destination.deleteRecursively()
+        }
+    }
+
     private fun zipOf(vararg items: Pair<String, String?>): ByteArray {
         val bytes = ByteArrayOutputStream()
         ZipOutputStream(bytes).use { zip ->

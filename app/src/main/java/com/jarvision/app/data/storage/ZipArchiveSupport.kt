@@ -62,7 +62,7 @@ object ZipArchiveSupport {
         var directories = 0
         var expanded = 0L
         val seen = mutableSetOf<String>()
-        ZipInputStream(BufferedInputStream(input)).use { zip ->
+        validatedZipInput(input).use { zip ->
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
             var entry = zip.nextEntry
             while (entry != null) {
