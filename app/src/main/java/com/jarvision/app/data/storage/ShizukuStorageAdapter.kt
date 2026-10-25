@@ -8,7 +8,6 @@ import android.os.Bundle
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.os.RemoteException
-import android.system.Os
 import com.jarvision.app.shizuku.IShizukuStorageService
 import com.jarvision.app.shizuku.ShizukuStorageUserService
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -69,7 +68,7 @@ class ShizukuStorageAdapter private constructor(context: Context) {
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
-            val service = binder?.let(IShizukuStorageService.Stub::asInterface)
+            val service = IShizukuStorageService.Stub.asInterface(binder)
             if (service == null || binder?.isBinderAlive != true) {
                 remoteService = null
                 binding = false
@@ -340,7 +339,7 @@ class ShizukuStorageAdapter private constructor(context: Context) {
         )
     }
 
-    private companion object {
+    companion object {
         const val REQUEST_PERMISSION_CODE = 5721
         const val MIN_USER_SERVICE_VERSION = 10
         const val USER_SERVICE_VERSION = 1
@@ -362,10 +361,5 @@ class ShizukuStorageAdapter private constructor(context: Context) {
                     instance = it
                 }
             }
-    }
-
-    companion object Access {
-        fun get(context: Context): ShizukuStorageAdapter =
-            Companion.get(context)
     }
 }

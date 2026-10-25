@@ -12,6 +12,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.jarvision.app.data.storage.SafStorageGateway
 import com.jarvision.app.data.storage.SharedStorageGateway
+import com.jarvision.app.data.storage.ShizukuStorageAdapter
 import com.jarvision.app.data.storage.StorageEntry
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -25,7 +26,8 @@ import kotlinx.coroutines.withContext
 enum class StorageAccessMode {
     NONE,
     SHARED_STORAGE,
-    DOCUMENT_TREE
+    DOCUMENT_TREE,
+    SHIZUKU_STORAGE
 }
 
 data class FolderLocation(
@@ -48,6 +50,7 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
     private val preferences = application.getSharedPreferences(PREFERENCES_NAME, 0)
     private val safGateway = SafStorageGateway(application.contentResolver)
     private val sharedStorageGateway = SharedStorageGateway()
+    private val shizukuStorageAdapter = ShizukuStorageAdapter.get(application)
 
     private val mutableUiState = MutableStateFlow(FilesUiState())
     val uiState: StateFlow<FilesUiState> = mutableUiState.asStateFlow()
@@ -64,6 +67,12 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun refreshAccess() {
         val current = mutableUiState.value
+        if (
+            current.accessMode == StorageAccessMode.SHIZUKU_STORAGE &&
+            shizukuStorageAdapter.status.value.isConnected &&
+            current.currentPath.isNotEmpty()
+        ) return
+
         if (hasSharedStorageAccess()) {
             when {
                 current.accessMode == StorageAccessMode.SHARED_STORAGE &&
@@ -130,7 +139,10 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
     fun navigateInto(entry: StorageEntry) {
         if (!entry.isDirectory) return
         val state = mutableUiState.value
-        val newLocation = if (state.accessMode == StorageAccessMode.SHARED_STORAGE) {
+        val newLocation = if (
+            state.accessMode == StorageAccessMode.SHARED_STORAGE ||
+            state.accessMode == StorageAccessMode.SHIZUKU_STORAGE
+        ) {
             val path = entry.absolutePath ?: return
             FolderLocation(entry.documentId, entry.displayName, path)
         } else {
@@ -251,6 +263,31 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun openShizukuRoot() {
+        if (!shizukuStorageAdapter.status.value.isConnected) {
+            mutableUiState.value = mutableUiState.value.copy(
+                errorMessage = "Connect to Shizuku first to browse protected folders."
+            )
+            return
+        }
+
+        val rootPath = shizukuStorageAdapter.sharedStorageRootPath
+        val rootLocation = FolderLocation(
+            documentId = rootPath,
+            displayName = "Shared storage (Shizuku)",
+            absolutePath = rootPath
+        )
+        operationJob?.cancel()
+        mutableUiState.value = FilesUiState(
+            accessMode = StorageAccessMode.SHIZUKU_STORAGE,
+            currentPath = listOf(rootLocation),
+            isLoading = true
+        )
+        operationJob = viewModelScope.launch {
+            loadChildren(StorageAccessMode.SHIZUKU_STORAGE, null, rootLocation)
+        }
+    }
+
     private fun restoreTree(treeUriString: String) {
         operationJob?.cancel()
         mutableUiState.value = FilesUiState(
@@ -306,6 +343,9 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
                 when (accessMode) {
                     StorageAccessMode.SHARED_STORAGE ->
                         sharedStorageGateway.listChildren(location.absolutePath ?: location.documentId)
+
+                    StorageAccessMode.SHIZUKU_STORAGE ->
+                        shizukuStorageAdapter.listChildren(location.absolutePath ?: location.documentId)
 
                     StorageAccessMode.DOCUMENT_TREE -> {
                         val treeUri = Uri.parse(

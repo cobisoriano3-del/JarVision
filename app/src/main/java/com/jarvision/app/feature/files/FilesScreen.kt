@@ -22,6 +22,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -34,6 +37,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.InsertDriveFile
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -46,14 +50,18 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -63,8 +71,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.jarvision.app.data.storage.ShizukuStorageAdapter
 import com.jarvision.app.data.storage.StorageEntry
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -79,6 +90,10 @@ fun FilesScreen(
     val state by filesViewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
+    val shizukuAdapter = remember(context) { ShizukuStorageAdapter.get(context) }
+    val shizukuStatus by shizukuAdapter.status.collectAsState()
+    var shouldOpenShizukuAfterConnect by remember { mutableStateOf(false) }
+    var previewContent by remember { mutableStateOf<Pair<String, String>?>(null) }
 
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -108,6 +123,23 @@ fun FilesScreen(
 
     fun chooseFolder() {
         folderPicker.launch(state.treeUriString?.let { Uri.parse(it) })
+    }
+
+    fun openShizukuBrowser() {
+        if (shizukuStatus.isConnected) {
+            shouldOpenShizukuAfterConnect = false
+            filesViewModel.openShizukuRoot()
+        } else {
+            shouldOpenShizukuAfterConnect = true
+            shizukuAdapter.connect()
+        }
+    }
+
+    LaunchedEffect(shizukuStatus.isConnected, shouldOpenShizukuAfterConnect) {
+        if (shizukuStatus.isConnected && shouldOpenShizukuAfterConnect) {
+            shouldOpenShizukuAfterConnect = false
+            filesViewModel.openShizukuRoot()
+        }
     }
 
     fun requestStorageAccess() {
@@ -148,6 +180,29 @@ fun FilesScreen(
     }
 
     fun openFile(entry: StorageEntry) {
+        if (state.accessMode == StorageAccessMode.SHIZUKU_STORAGE) {
+            val path = entry.absolutePath
+            if (path.isNullOrBlank()) {
+                coroutineScope.launch {
+                    snackbarHostState.showSnackbar("Shizuku did not return a valid file path.")
+                }
+                return
+            }
+            coroutineScope.launch {
+                try {
+                    val contents = withContext(Dispatchers.IO) {
+                        shizukuAdapter.readTextFile(path)
+                    }
+                    previewContent = entry.displayName to contents
+                } catch (error: Exception) {
+                    snackbarHostState.showSnackbar(
+                        error.message ?: "Couldn't read this file through Shizuku."
+                    )
+                }
+            }
+            return
+        }
+
         val fileUri = try {
             if (
                 state.accessMode == StorageAccessMode.SHARED_STORAGE &&
@@ -199,7 +254,9 @@ fun FilesScreen(
             state.accessMode == StorageAccessMode.NONE -> {
                 StorageAccessRequiredState(
                     onRequestStorageAccess = ::requestStorageAccess,
-                    onChooseFolder = ::chooseFolder
+                    onChooseFolder = ::chooseFolder,
+                    shizukuConnected = shizukuStatus.isConnected,
+                    onOpenShizuku = ::openShizukuBrowser
                 )
             }
 
@@ -222,6 +279,8 @@ fun FilesScreen(
                     onNavigateBack = filesViewModel::navigateBack,
                     onRefresh = filesViewModel::refresh,
                     onChooseFolder = ::chooseFolder,
+                    shizukuConnected = shizukuStatus.isConnected,
+                    onOpenShizuku = ::openShizukuBrowser,
                     onOpenEntry = { entry ->
                         if (entry.isDirectory) filesViewModel.navigateInto(entry)
                         else openFile(entry)
@@ -235,13 +294,41 @@ fun FilesScreen(
             hostState = snackbarHostState,
             modifier = Modifier.align(Alignment.BottomCenter)
         )
+
+        previewContent?.let { (fileName, textContent) ->
+            AlertDialog(
+                onDismissRequest = { previewContent = null },
+                title = { Text("$fileName · Read-only") },
+                text = {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 420.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Text(
+                            text = textContent,
+                            fontFamily = FontFamily.Monospace,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { previewContent = null }) {
+                        Text("Close")
+                    }
+                }
+            )
+        }
     }
 }
 
 @Composable
 private fun StorageAccessRequiredState(
     onRequestStorageAccess: () -> Unit,
-    onChooseFolder: () -> Unit
+    onChooseFolder: () -> Unit,
+    shizukuConnected: Boolean,
+    onOpenShizuku: () -> Unit
 ) {
     val isManageAllFilesSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R
     val needsLegacyRuntimePermission = Build.VERSION.SDK_INT <= Build.VERSION_CODES.P
@@ -296,6 +383,10 @@ private fun StorageAccessRequiredState(
                 Text("Choose a folder instead")
             }
         }
+        Spacer(Modifier.height(6.dp))
+        TextButton(onClick = onOpenShizuku) {
+            Text(if (shizukuConnected) "Browse protected folders" else "Connect Shizuku")
+        }
         Spacer(Modifier.height(10.dp))
         Text(
             text = "Android still protects private data belonging to other apps. Storage access does not bypass those system restrictions.",
@@ -312,6 +403,8 @@ private fun BrowserState(
     onNavigateBack: () -> Unit,
     onRefresh: () -> Unit,
     onChooseFolder: () -> Unit,
+    shizukuConnected: Boolean,
+    onOpenShizuku: () -> Unit,
     onOpenEntry: (StorageEntry) -> Unit,
     onRetry: () -> Unit
 ) {
@@ -354,6 +447,21 @@ private fun BrowserState(
             }
         }
 
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End
+        ) {
+            TextButton(onClick = onOpenShizuku) {
+                Text(if (shizukuConnected) "Browse protected folders" else "Connect Shizuku")
+            }
+        }
+        if (state.accessMode == StorageAccessMode.SHIZUKU_STORAGE) {
+            Text(
+                text = "Read-only Shizuku browsing · No file changes are made",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         Spacer(Modifier.height(8.dp))
 
         when {

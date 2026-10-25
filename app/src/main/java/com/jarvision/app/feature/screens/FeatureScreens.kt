@@ -3,7 +3,6 @@ package com.jarvision.app.feature.screens
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ViewWeek
 import androidx.compose.material.icons.filled.Workspaces
@@ -47,16 +46,6 @@ fun DualSpaceScreen() {
         description = "Optional side-by-side folder windows with independent navigation. Standard single-pane browsing remains the default and will never be forced into a dual-window layout.",
         status = "Optional feature planned",
         icon = Icons.Filled.ViewWeek
-    )
-}
-
-@Composable
-fun AdvancedAccessScreen() {
-    FeatureStatusScreen(
-        title = "Advanced Access",
-        description = "Shizuku support will be optional and capability-checked. JarVision will not claim access to protected app-private data unless the device's actual permission level allows the operation.",
-        status = "Permission layer pending",
-        icon = Icons.Filled.Security
     )
 }
 

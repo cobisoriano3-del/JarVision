@@ -24,8 +24,8 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.jarvision.app.feature.access.AdvancedAccessScreen
 import com.jarvision.app.feature.files.FilesScreen
-import com.jarvision.app.feature.screens.AdvancedAccessScreen
 import com.jarvision.app.feature.screens.ArchivesScreen
 import com.jarvision.app.feature.screens.DualSpaceScreen
 import com.jarvision.app.feature.screens.EditorScreen
