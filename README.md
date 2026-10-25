@@ -13,7 +13,7 @@ JarVision is a native Android file manager and universal code workspace. It aims
 
 ## Current status
 
-The current `main` branch contains the Android project configuration, navigation shell, feature boundaries, product/architecture notes, a smoke-test scaffold, and a manual-only Android build workflow. File operations, the editor engine, archive processing, project persistence, and Shizuku actions are **not implemented yet**.
+The current `main` branch contains the Android project configuration, navigation shell, feature boundaries, product/architecture notes, a smoke-test scaffold, and an Android build workflow. File operations, the editor engine, archive processing, project persistence, and Shizuku actions are **not implemented yet**.
 
 ## Technology baseline
 
@@ -21,10 +21,10 @@ The current `main` branch contains the Android project configuration, navigation
 - Gradle Kotlin DSL
 - Android min SDK 26; compile/target SDK 36
 - Android Gradle Plugin 8.13.2; Gradle 8.13
-- Kotlin Gradle plugin 2.4.21
-- Compose BOM 2026.09.00
+- Kotlin Gradle plugin 2.3.21
+- Compose BOM 2026.05.00; Navigation Compose 2.9.8
 
-Versions are pinned. Recheck the official Android Gradle Plugin / Gradle / Kotlin compatibility matrix before upgrades.
+Versions are pinned to keep the toolchain compatible. Recheck the official Android Gradle Plugin / Gradle / Kotlin compatibility matrix before upgrades.
 
 ## Build
 
@@ -52,7 +52,7 @@ The wrapper consists of the checked-in launcher scripts, `gradle/wrapper/gradle-
 
 Android Auto Backup is disabled in the starter manifest so future project files are not silently swept into OS-managed backups. A dedicated, user-controlled backup/export flow is planned separately.
 
-The manual-only workflow on the default `main` branch at `.github/workflows/android-build.yml` uses the wrapper to compile, test, and upload a debug APK. It is now discoverable through GitHub Actions. No build has been run yet.
+The GitHub Actions workflow at `.github/workflows/android-build.yml` runs on pushes to `main` and can also be started manually from the Actions tab. It compiles the debug APK, runs JVM tests, runs the Android emulator smoke test, and uploads an artifact named `jarvision-debug-apk` if every required stage succeeds. Open the workflow run and download the artifact from its Artifacts section.
 
 ## Documentation
 
