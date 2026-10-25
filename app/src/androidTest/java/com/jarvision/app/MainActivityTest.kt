@@ -14,8 +14,8 @@ class MainActivityTest {
     val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun appLaunchesIntoFilesDestination() {
-        composeRule.onNodeWithText("JarVision").assertIsDisplayed()
-        composeRule.onNodeWithText("Storage layer next").assertIsDisplayed()
+    fun appLaunchesIntoFolderPickerEmptyState() {
+        composeRule.onNodeWithText("Choose a folder").assertIsDisplayed()
+        composeRule.onNodeWithText("Choose folder").assertIsDisplayed()
     }
 }

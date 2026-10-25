@@ -3,23 +3,12 @@ package com.jarvision.app.feature.screens
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Code
-import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ViewWeek
 import androidx.compose.material.icons.filled.Workspaces
 import androidx.compose.runtime.Composable
 import com.jarvision.app.ui.components.FeatureStatusScreen
-
-@Composable
-fun FilesScreen() {
-    FeatureStatusScreen(
-        title = "Files",
-        description = "A clean, single-pane file manager is the default. The next phase will implement Android folder access, real directory listings, search, selection, and safe file operations.",
-        status = "Storage layer next",
-        icon = Icons.Filled.FolderOpen
-    )
-}
 
 @Composable
 fun ProjectsScreen() {
