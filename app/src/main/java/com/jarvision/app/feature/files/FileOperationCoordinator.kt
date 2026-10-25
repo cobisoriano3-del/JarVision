@@ -16,6 +16,8 @@ import java.io.InputStream
 import java.net.URLConnection
 import java.nio.file.Files
 import java.util.Locale
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 
 /**
  * Executes file operations through the active storage adapter. Writes are supported only for
@@ -247,6 +249,159 @@ class FileOperationCoordinator(
             }
             else -> throw IOException("Changes are unavailable in read-only Shizuku mode.")
         }
+    }
+
+    /**
+     * Creates a ZIP in the current writable folder from one selected item. The archive is first
+     * streamed into private cache, then published without replacing an existing destination.
+     */
+    fun compressToZip(
+        mode: StorageAccessMode,
+        treeUriString: String?,
+        source: StorageEntry,
+        destinationParentDocumentId: String,
+        destinationParentAbsolutePath: String?,
+        requestedName: String
+    ): String {
+        if (mode != StorageAccessMode.SHARED_STORAGE && mode != StorageAccessMode.DOCUMENT_TREE) {
+            throw IOException("Compression is unavailable in read-only Shizuku mode.")
+        }
+        var outputName = requestedName.trim()
+        if (!outputName.lowercase(Locale.ROOT).endsWith(".zip")) outputName += ".zip"
+        validateName(outputName)
+        val conflict = findNamedChild(
+            mode, treeUriString, destinationParentDocumentId, destinationParentAbsolutePath, outputName
+        )
+        if (conflict != null) throw IOException("An item with that name already exists.")
+
+        val stagedZip = File(context.cacheDir, "jarvision-compress-" + System.nanoTime() + ".zip")
+        try {
+            val expanded = longArrayOf(0L)
+            val seen = mutableSetOf<String>()
+            ZipOutputStream(stagedZip.outputStream().buffered()).use { zip ->
+                addEntryToZip(
+                    zip = zip,
+                    mode = mode,
+                    treeUriString = treeUriString,
+                    entry = source,
+                    archivePath = source.displayName,
+                    seenPaths = seen,
+                    expandedBytes = expanded
+                )
+            }
+
+            when (mode) {
+                StorageAccessMode.SHARED_STORAGE -> {
+                    val parent = checkedSharedDirectory(destinationParentAbsolutePath ?: destinationParentDocumentId)
+                    val target = safeSharedChildTarget(parent, outputName)
+                    if (target.exists() || Files.isSymbolicLink(target.toPath())) {
+                        throw IOException("An item with that name already exists.")
+                    }
+                    val temporary = safeSharedChildTarget(
+                        parent, ".jarvision-stage-" + System.nanoTime() + ".zip"
+                    )
+                    try {
+                        copyFileTree(stagedZip, temporary)
+                        Files.move(temporary.toPath(), target.toPath())
+                    } catch (error: Exception) {
+                        temporary.delete()
+                        throw error
+                    }
+                }
+                StorageAccessMode.DOCUMENT_TREE -> {
+                    val treeUri = parseTreeUri(treeUriString)
+                    requireWriteGrant(treeUri)
+                    val parentUri = documentUri(treeUri, destinationParentDocumentId)
+                    val targetUri = DocumentsContract.createDocument(
+                        resolver, parentUri, "application/zip", outputName
+                    ) ?: throw IOException("The storage provider couldn't create the ZIP file.")
+                    try {
+                        val actual = saf.getDocument(treeUri, DocumentsContract.getDocumentId(targetUri))
+                        if (actual == null || !actual.displayName.equals(outputName, ignoreCase = true)) {
+                            throw IOException("The storage provider changed the ZIP name; no archive was written.")
+                        }
+                        stagedZip.inputStream().buffered().use { input ->
+                            resolver.openOutputStream(targetUri, "w").use { output ->
+                                if (output == null) throw IOException("The storage provider couldn't write the ZIP.")
+                                input.copyTo(output)
+                            }
+                        }
+                    } catch (error: Exception) {
+                        runCatching { DocumentsContract.deleteDocument(resolver, targetUri) }
+                        throw error
+                    }
+                }
+                else -> throw IOException("Compression is unavailable in read-only Shizuku mode.")
+            }
+            return outputName
+        } finally {
+            stagedZip.delete()
+        }
+    }
+
+    private fun addEntryToZip(
+        zip: ZipOutputStream,
+        mode: StorageAccessMode,
+        treeUriString: String?,
+        entry: StorageEntry,
+        archivePath: String,
+        seenPaths: MutableSet<String>,
+        expandedBytes: LongArray
+    ) {
+        validateName(entry.displayName)
+        val normalizedPath = ZipArchiveSupport.safeEntryPath(archivePath)
+        if (!seenPaths.add(normalizedPath)) {
+            throw IOException("The selected folder contains duplicate normalized names.")
+        }
+
+        if (entry.isDirectory) {
+            zip.putNextEntry(ZipEntry(normalizedPath + "/"))
+            zip.closeEntry()
+            val children = when (mode) {
+                StorageAccessMode.SHARED_STORAGE -> {
+                    val directory = checkedSharedDirectory(
+                        entry.absolutePath ?: entry.documentId
+                    )
+                    shared.listChildren(directory.path)
+                }
+                StorageAccessMode.DOCUMENT_TREE -> saf.listChildren(
+                    parseTreeUri(treeUriString), entry.documentId
+                )
+                else -> throw IOException("Compression is unavailable in read-only Shizuku mode.")
+            }
+            children.forEach { child ->
+                addEntryToZip(
+                    zip,
+                    mode,
+                    treeUriString,
+                    child,
+                    normalizedPath + "/" + child.displayName,
+                    seenPaths,
+                    expandedBytes
+                )
+            }
+            return
+        }
+
+        zip.putNextEntry(ZipEntry(normalizedPath))
+        openInputStream(mode, treeUriString, entry).use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            var entryBytes = 0L
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                entryBytes += count.toLong()
+                expandedBytes[0] += count.toLong()
+                if (entryBytes > ZipArchiveSupport.MAX_ENTRY_BYTES) {
+                    throw IOException("A file exceeds the 256 MiB compression limit.")
+                }
+                if (expandedBytes[0] > ZipArchiveSupport.MAX_TOTAL_BYTES) {
+                    throw IOException("The selected item exceeds the 1 GiB total compression limit.")
+                }
+                zip.write(buffer, 0, count)
+            }
+        }
+        zip.closeEntry()
     }
 
     fun testZip(

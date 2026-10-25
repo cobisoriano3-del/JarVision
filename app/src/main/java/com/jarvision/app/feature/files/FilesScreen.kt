@@ -148,6 +148,8 @@ fun FilesScreen(
     var informationEntry by remember { mutableStateOf<StorageEntry?>(null) }
     var renameEntry by remember { mutableStateOf<StorageEntry?>(null) }
     var renameName by remember { mutableStateOf("") }
+    var compressEntry by remember { mutableStateOf<StorageEntry?>(null) }
+    var compressName by remember { mutableStateOf("") }
     var deleteEntry by remember { mutableStateOf<StorageEntry?>(null) }
     var clipboard by remember { mutableStateOf<PendingFileClipboard?>(null) }
     var pasteConflict by remember { mutableStateOf<PasteConflict?>(null) }
@@ -539,6 +541,29 @@ fun FilesScreen(
         }
     }
 
+    fun compressSelected(entry: StorageEntry, requestedName: String) {
+        val destination = state.currentPath.lastOrNull() ?: return
+        coroutineScope.launch {
+            try {
+                val outputName = withContext(Dispatchers.IO) {
+                    fileOperations.compressToZip(
+                        state.accessMode,
+                        state.treeUriString,
+                        entry,
+                        destination.documentId,
+                        destination.absolutePath,
+                        requestedName
+                    )
+                }
+                compressEntry = null
+                filesViewModel.refresh()
+                showMessage("Created " + outputName)
+            } catch (error: Exception) {
+                showMessage(error.message ?: "Couldn't compress this item.")
+            }
+        }
+    }
+
     fun testArchive(entry: StorageEntry) {
         selectedEntry = null
         coroutineScope.launch {
@@ -705,6 +730,11 @@ fun FilesScreen(
                             selectedEntry = null
                             deleteEntry = entry
                         }
+                        ContextActionRow("Compress…", Icons.Filled.Archive) {
+                            selectedEntry = null
+                            compressName = defaultZipName(entry)
+                            compressEntry = entry
+                        }
                     }
                     if (!entry.isDirectory && entry.displayName.lowercase(Locale.ROOT).endsWith(".zip")) {
                         ContextActionRow("Test archive", Icons.Filled.Archive) { testArchive(entry) }
@@ -734,6 +764,37 @@ fun FilesScreen(
                 text = { Text(info) },
                 confirmButton = {
                     TextButton(onClick = { informationEntry = null }) { Text("Close") }
+                }
+            )
+        }
+
+        compressEntry?.let { entry ->
+            AlertDialog(
+                onDismissRequest = { compressEntry = null },
+                title = { Text("Compress to ZIP") },
+                text = {
+                    Column {
+                        Text(
+                            "Create a ZIP copy of " + entry.displayName + " in the current folder. The original item will not be changed.",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        OutlinedTextField(
+                            value = compressName,
+                            onValueChange = { compressName = it },
+                            label = { Text("Archive name") },
+                            singleLine = true
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { compressSelected(entry, compressName) },
+                        enabled = compressName.isNotBlank()
+                    ) { Text("Compress") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { compressEntry = null }) { Text("Cancel") }
                 }
             )
         }
@@ -1242,6 +1303,17 @@ private fun ErrorState(
             Button(onClick = onChooseFolder) { Text("Choose folder") }
         }
     }
+}
+
+private fun defaultZipName(entry: StorageEntry): String {
+    val name = entry.displayName
+    val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+    val base = if (!entry.isDirectory && extension.isNotBlank()) {
+        name.substringBeforeLast('.', name)
+    } else {
+        name
+    }
+    return if (!entry.isDirectory && extension == "zip") "$base-compressed.zip" else "$base.zip"
 }
 
 private fun bestMimeType(entry: StorageEntry): String {
