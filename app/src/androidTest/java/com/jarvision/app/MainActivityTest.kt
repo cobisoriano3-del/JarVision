@@ -1,6 +1,6 @@
 package com.jarvision.app
 
-import androidx.compose.ui.test.assertExists
+import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -15,7 +15,7 @@ class MainActivityTest {
 
     @Test
     fun appLaunchesIntoFilesDestination() {
-        composeRule.onNodeWithText("JarVision").assertExists()
-        composeRule.onNodeWithText("Storage layer next").assertExists()
+        composeRule.onNodeWithText("JarVision").assertIsDisplayed()
+        composeRule.onNodeWithText("Storage layer next").assertIsDisplayed()
     }
 }
