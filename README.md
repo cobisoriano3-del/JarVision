@@ -7,19 +7,19 @@ JarVision is a native Android file manager and universal code workspace. It aims
 - **Universal by default:** not tied to Minecraft, one language, or one application.
 - **Single-pane first:** normal browsing uses one location; **Dual Space** is optional.
 - **Projects are first-class:** work in an app-managed workspace and export explicitly when ready.
-- **Honest permissions:** normal browsing works without special access; restricted operations are capability-checked.
+- **Honest permissions:** normal browsing works without special access; privileged adapters are explicit and capability-checked.
 - **Protect user data:** clear conflict handling, safe writes, recoverable deletion where possible, and explicit warnings for irreversible actions.
 - **No fake functionality:** unfinished capabilities are labeled until implemented and tested.
 
 ## Current status
 
-**Implemented:** a single-pane file browser that requests Android's special **Allow access to manage all files** access on Android 11+ and, once granted, lists actual shared internal-storage entries. It navigates folders, shows file sizes and modification dates, refreshes, and hands files to other apps with temporary read-only URI grants. The folder picker remains as a fallback if broad access is declined or unavailable.
+**Implemented:** a single-pane file browser with Android all-files access on Android 11+ and a Storage Access Framework folder-picker fallback. An optional Shizuku connection adapter is being added for read-only browsing of existing shared-storage paths that the Shizuku shell/root identity can access, including device-dependent access to `Android/data` and `Android/obb`. Shizuku is an external companion app and must be running and explicitly authorized.
 
-**Still planned:** safe copy/move/delete/rename, favorites, search and selection, archive operations, persistent project workspaces, the universal editor, Dual Space, and optional Shizuku integration.
+**Still planned:** safe copy/move/delete/rename, favorites, search and selection, archive operations, persistent project workspaces, the universal editor, Dual Space, and broader privileged operations.
 
 ## Storage permissions and platform limits
 
-On Android 11+ (API 30+), broad shared-storage access uses `MANAGE_EXTERNAL_STORAGE` and the system's special app-access settings page; it is not a normal runtime permission dialog. Users must explicitly enable it. JarVision does not gain access to other apps' private directories, including protected `Android/data` locations. On Android 10, JarVision uses the folder picker because scoped storage has no equivalent all-files switch for this target; older supported releases use legacy runtime storage permissions when available. Google Play restricts all-files access to qualifying core use cases, so distribution requirements must be checked before publishing there.
+On Android 11+ (API 30+), broad shared-storage access uses `MANAGE_EXTERNAL_STORAGE` and the system's special app-access settings page; it is not a normal runtime permission dialog. Shizuku runs a separate user service as shell/ADB or root when available, but the capabilities are different: shell does not equal root and may still be blocked from individual folders. JarVision's Shizuku adapter is read-only, explicitly limits requested paths to shared internal storage, and refuses to follow paths outside that root. It does not claim access to every `Android/data` entry, other apps' private internal data, or all devices. Google Play restricts all-files access to qualifying core use cases, so distribution requirements must be checked before publishing there.
 
 ## Technology baseline
 
@@ -29,9 +29,10 @@ On Android 11+ (API 30+), broad shared-storage access uses `MANAGE_EXTERNAL_STOR
 - Android Gradle Plugin 8.13.2; Gradle 8.13
 - Kotlin Gradle plugin 2.3.21
 - Compose BOM 2026.05.00; Navigation Compose 2.9.8
-- Storage Access Framework fallback and a permission-checked shared-storage adapter
+- Shizuku API/provider 13.1.5
+- Storage Access Framework, shared-storage adapter, optional Shizuku read-only adapter
 
-Versions are pinned to keep the toolchain compatible. Recheck the official Android Gradle Plugin / Gradle / Kotlin compatibility matrix before upgrades.
+Versions are pinned to keep the toolchain compatible. Recheck official Android and Shizuku compatibility guidance before upgrades.
 
 ## Build
 
@@ -55,12 +56,8 @@ gradlew.bat connectedDebugAndroidTest
 
 Instrumentation tests require an emulator or connected Android device. After a successful build, the debug APK is at `app/build/outputs/apk/debug/app-debug.apk`.
 
-The wrapper consists of the checked-in launcher scripts, `gradle/wrapper/gradle-wrapper.jar`, and `gradle/wrapper/gradle-wrapper.properties`. Keep these files together. When intentionally upgrading Gradle, update the distribution URL and checksum together and verify the official checksum before committing.
-
-Android Auto Backup is disabled in the starter manifest so future project files are not silently swept into OS-managed backups. A dedicated, user-controlled backup/export flow is planned separately.
-
-The GitHub Actions workflow at `.github/workflows/android-build.yml` runs on pushes to `main` and can also be started manually from the Actions tab. It builds the debug APK, runs JVM tests, and uploads `jarvision-debug-apk` immediately after that stage succeeds. Only then does it attempt KVM setup and the Android emulator smoke test, so emulator startup/test failures do not prevent delivery of a successfully built APK.
+The workflow builds the debug APK, runs JVM tests, and uploads `jarvision-debug-apk` immediately after that stage succeeds. Only then does it attempt KVM setup and the Android emulator smoke test.
 
 ## Documentation
 
-See [architecture and product scope](docs/architecture.md). Treat broad storage access and browser operations as beta until tested on physical devices and multiple document providers. The `foundation` branch remains available as the pre-promotion development snapshot.
+See [architecture and product scope](docs/architecture.md). Test storage access on physical devices and multiple document providers. The `foundation` branch remains available as the pre-promotion development snapshot.
