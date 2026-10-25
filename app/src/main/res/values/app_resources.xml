@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">JarVision</string>
+
+    <style name="Theme.JarVision" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">#78B9FF</item>
+        <item name="android:statusBarColor">#0A1019</item>
+        <item name="android:navigationBarColor">#0A1019</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
+</resources>
