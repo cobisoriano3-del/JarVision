@@ -2,7 +2,9 @@ package com.jarvision.app.data.storage
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -11,6 +13,9 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 class ZipArchiveSupportTest {
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
+
     @Test
     fun testsValidZipAndCountsEntries() {
         val bytes = zipOf("docs/" to null, "docs/readme.txt" to "hello", "data.json" to "{}")
@@ -22,7 +27,7 @@ class ZipArchiveSupportTest {
 
     @Test
     fun extractsValidZipWithinDestination() {
-        val destination = createTempDir(prefix = "jarvision-zip-test-")
+        val destination = temporaryFolder.newFolder("valid-zip")
         try {
             ZipArchiveSupport.extract(
                 ByteArrayInputStream(zipOf("folder/note.txt" to "safe")),
@@ -60,7 +65,7 @@ class ZipArchiveSupportTest {
 
     @Test
     fun extractionRejectsNonZipInput() {
-        val destination = createTempDir(prefix = "jarvision-zip-invalid-")
+        val destination = temporaryFolder.newFolder("invalid-zip")
         try {
             val error = runCatching {
                 ZipArchiveSupport.extract(ByteArrayInputStream("not a zip".toByteArray()), destination)
