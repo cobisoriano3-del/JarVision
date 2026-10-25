@@ -84,6 +84,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
+import coil3.request.crossfade
 import com.jarvision.app.data.storage.SafStorageGateway
 import com.jarvision.app.data.storage.SharedStorageGateway
 import com.jarvision.app.data.storage.ShizukuStorageAdapter
