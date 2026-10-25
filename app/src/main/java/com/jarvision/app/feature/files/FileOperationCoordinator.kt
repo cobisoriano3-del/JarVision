@@ -14,6 +14,7 @@ import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.net.URLConnection
+import java.nio.file.Files
 import java.util.Locale
 
 /**
@@ -80,7 +81,7 @@ class FileOperationCoordinator(
             StorageAccessMode.SHARED_STORAGE -> {
                 val source = checkedSharedFile(entry.absolutePath ?: entry.documentId)
                 val parent = checkedSharedDirectory(parentAbsolutePath ?: parentDocumentId)
-                val target = File(parent, newName).canonicalFile
+                val target = safeSharedChildTarget(parent, newName)
                 if (source.canonicalFile == target) return
                 if (target.exists()) throw IOException("An item with that name already exists.")
                 if (!source.renameTo(target)) throw IOException("Android couldn't rename this item.")
@@ -140,7 +141,7 @@ class FileOperationCoordinator(
                     destinationParentAbsolutePath ?: destinationParentDocumentId
                 )
                 var replaceNotice: String? = null
-                val target = File(destinationParent, targetName).canonicalFile
+                val target = safeSharedChildTarget(destinationParent, targetName)
                 if (sourceFile.canonicalFile == target) {
                     if (moveSource) return "This item is already in that folder."
                     throw IOException("Copying an item over itself isn't allowed.")
@@ -498,8 +499,11 @@ class FileOperationCoordinator(
     private fun copyFileTree(source: File, target: File) {
         val canonicalSource = source.canonicalFile
         if (!canonicalSource.exists()) throw IOException("The source item no longer exists.")
+        if (target.exists() || Files.isSymbolicLink(target.toPath())) {
+            throw IOException("The destination item already exists; no files were overwritten.")
+        }
         if (canonicalSource.isDirectory) {
-            if (!target.mkdirs() && !target.isDirectory) throw IOException("Couldn't create the destination folder.")
+            if (!target.mkdir()) throw IOException("Couldn't create the destination folder; it may already exist.")
             val children = canonicalSource.listFiles() ?: throw IOException("Couldn't list a source folder.")
             children.forEach { child ->
                 val canonicalChild = child.canonicalFile
@@ -519,8 +523,10 @@ class FileOperationCoordinator(
     }
 
     private fun checkedSharedDirectory(path: String): File {
-        val file = File(path).canonicalFile
         val root = shared.rootDirectory().canonicalFile
+        val requested = File(path).absoluteFile
+        rejectSymbolicLinkComponents(requested, root)
+        val file = requested.canonicalFile
         if (file != root && !file.path.startsWith(root.path + File.separator)) {
             throw IOException("Operations are restricted to shared internal storage.")
         }
@@ -529,13 +535,48 @@ class FileOperationCoordinator(
     }
 
     private fun checkedSharedFile(path: String): File {
-        val file = File(path).canonicalFile
         val root = shared.rootDirectory().canonicalFile
+        val requested = File(path).absoluteFile
+        rejectSymbolicLinkComponents(requested, root)
+        val file = requested.canonicalFile
         if (file != root && !file.path.startsWith(root.path + File.separator)) {
             throw IOException("Operations are restricted to shared internal storage.")
         }
         if (!file.exists()) throw IOException("This item no longer exists.")
         return file
+    }
+
+    private fun rejectSymbolicLinkComponents(requested: File, root: File) {
+        // Use the storage root's original absolute spelling for component traversal: Android
+        // may expose a platform-managed alias whose canonical path differs from its public path.
+        val publicRootPath = shared.rootDirectory().absoluteFile.toPath().normalize()
+        val requestedPath = requested.toPath().normalize()
+        if (!requestedPath.startsWith(publicRootPath)) {
+            throw IOException("Operations are restricted to shared internal storage.")
+        }
+        var current = publicRootPath
+        for (component in publicRootPath.relativize(requestedPath)) {
+            current = current.resolve(component)
+            if (Files.isSymbolicLink(current)) {
+                throw IOException("Symbolic links aren't supported for file-changing operations.")
+            }
+        }
+        val canonicalRequested = requested.canonicalFile
+        if (canonicalRequested != root &&
+            !canonicalRequested.path.startsWith(root.path + File.separator)
+        ) {
+            throw IOException("Operations are restricted to shared internal storage.")
+        }
+    }
+
+    private fun safeSharedChildTarget(parent: File, name: String): File {
+        validateName(name)
+        val safeParent = parent.canonicalFile
+        val target = File(safeParent, name).absoluteFile
+        if (target.parentFile?.canonicalFile != safeParent || Files.isSymbolicLink(target.toPath())) {
+            throw IOException("The destination path isn't a safe child of the selected folder.")
+        }
+        return target
     }
 
     private fun requireWriteGrant(treeUri: Uri) {
