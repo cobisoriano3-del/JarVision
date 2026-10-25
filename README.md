@@ -13,7 +13,7 @@ JarVision is a native Android file manager and universal code workspace. It aims
 
 ## Current status
 
-**Implemented:** a single-pane file browser with Android all-files access on Android 11+ and a Storage Access Framework folder-picker fallback. An optional Shizuku connection adapter is being added for read-only browsing of existing shared-storage paths that the Shizuku shell/root identity can access, including device-dependent access to `Android/data` and `Android/obb`. Shizuku is an external companion app and must be running and explicitly authorized.
+**Implemented:** a single-pane file browser with Android all-files access, a Storage Access Framework fallback, optional read-only Shizuku browsing, and Coil-powered folder thumbnails. The thumbnail loader checks `folder.jpg`, `folder.jpeg`, `folder.png`, `folder.webp`, `.foldericon`, `.foldericon.jpg`, `cover.jpg`, `cover.png`, or `thumbnail.jpg` inside each folder. Shizuku thumbnails use a size-bounded, read-only service call. Missing or inaccessible images use a folder-name-based fallback icon.
 
 **Still planned:** safe copy/move/delete/rename, favorites, search and selection, archive operations, persistent project workspaces, the universal editor, Dual Space, and broader privileged operations.
 
@@ -30,6 +30,7 @@ On Android 11+ (API 30+), broad shared-storage access uses `MANAGE_EXTERNAL_STOR
 - Kotlin Gradle plugin 2.3.21
 - Compose BOM 2026.05.00; Navigation Compose 2.9.8
 - Shizuku API/provider 13.1.5
+- Coil Compose 3.4.0 for folder thumbnails
 - Storage Access Framework, shared-storage adapter, optional Shizuku read-only adapter
 
 Versions are pinned to keep the toolchain compatible. Recheck official Android and Shizuku compatibility guidance before upgrades.

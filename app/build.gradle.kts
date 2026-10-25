@@ -12,8 +12,8 @@ android {
         applicationId = "com.jarvision.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -51,6 +51,7 @@ dependencies {
     implementation(libs.androidx.compose.material.icons.extended)
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
+    implementation(libs.coil.compose)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)

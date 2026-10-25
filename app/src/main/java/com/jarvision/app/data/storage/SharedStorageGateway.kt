@@ -16,6 +16,19 @@ class SharedStorageGateway {
     @Suppress("DEPRECATION")
     fun rootDirectory(): File = Environment.getExternalStorageDirectory()
 
+    fun findFolderThumbnailFile(directoryPath: String): File? {
+        val directory = runCatching { File(directoryPath).canonicalFile }.getOrNull() ?: return null
+        if (!directory.isDirectory) return null
+        for (name in FOLDER_THUMBNAIL_NAMES) {
+            val candidate = runCatching { File(directory, name).canonicalFile }.getOrNull() ?: continue
+            if (candidate.parentFile?.canonicalFile != directory) continue
+            if (!candidate.isFile || !candidate.canRead()) continue
+            if (candidate.length() !in 1L..MAX_FOLDER_THUMBNAIL_BYTES) continue
+            return candidate
+        }
+        return null
+    }
+
     @Throws(IOException::class, SecurityException::class)
     fun listChildren(directoryPath: String): List<StorageEntry> {
         val directory = File(directoryPath)
@@ -46,5 +59,11 @@ class SharedStorageGateway {
             compareByDescending<StorageEntry> { it.isDirectory }
                 .thenBy { it.displayName.lowercase(Locale.ROOT) }
         )
+    }
+
+    private companion object {
+        val FOLDER_THUMBNAIL_NAMES = listOf("folder.jpg", "folder.jpeg", "folder.png", "folder.webp",
+            ".foldericon", ".foldericon.jpg", "cover.jpg", "cover.png", "thumbnail.jpg")
+        const val MAX_FOLDER_THUMBNAIL_BYTES = 1L * 1024L * 1024L
     }
 }

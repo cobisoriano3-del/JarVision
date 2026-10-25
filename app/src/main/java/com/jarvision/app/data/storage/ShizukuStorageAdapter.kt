@@ -250,6 +250,15 @@ class ShizukuStorageAdapter private constructor(context: Context) {
         )
     }
 
+    fun loadFolderThumbnail(path: String): ByteArray? {
+        val service = requireService()
+        return try {
+            service.loadFolderThumbnail(path)
+        } catch (error: RemoteException) {
+            throw IOException(error.message ?: "Shizuku couldn't load this folder thumbnail.", error)
+        }
+    }
+
     /**
      * Returns bounded UTF-8 text for an in-app read-only preview. Binary or oversized files are
      * rejected rather than silently truncated or copied somewhere writable.

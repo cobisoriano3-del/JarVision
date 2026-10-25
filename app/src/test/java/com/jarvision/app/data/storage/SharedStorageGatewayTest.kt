@@ -30,6 +30,20 @@ class SharedStorageGatewayTest {
         assertEquals(listOf(true, true, false, false), entries.map { it.isDirectory })
     }
 
+    @Test
+    fun findsConventionalFolderThumbnail() {
+        val folder = temporaryFolder.newFolder("Pictures")
+        val thumbnail = folder.resolve("folder.jpg")
+        thumbnail.writeBytes(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xD9.toByte()))
+        assertEquals(thumbnail.canonicalFile, gateway.findFolderThumbnailFile(folder.absolutePath))
+    }
+
+    @Test
+    fun returnsNullWhenFolderHasNoThumbnail() {
+        val folder = temporaryFolder.newFolder("Documents")
+        assertEquals(null, gateway.findFolderThumbnailFile(folder.absolutePath))
+    }
+
     @Test(expected = IOException::class)
     fun listChildrenRejectsAFileInsteadOfDirectory() {
         val file = temporaryFolder.newFile("not-a-folder.txt")

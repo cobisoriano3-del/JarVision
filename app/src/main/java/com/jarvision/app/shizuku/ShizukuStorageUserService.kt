@@ -1,6 +1,7 @@
 package com.jarvision.app.shizuku
 
 import android.os.Bundle
+import java.io.ByteArrayOutputStream
 import android.os.ParcelFileDescriptor
 import android.os.RemoteException
 import android.provider.DocumentsContract
@@ -80,6 +81,37 @@ class ShizukuStorageUserService : IShizukuStorageService.Stub() {
 
     override fun getUid(): Int = Os.getuid()
 
+    override fun loadFolderThumbnail(path: String): ByteArray? {
+        val directory = checkedSharedStoragePath(path)
+        if (!directory.isDirectory) return null
+        for (name in FOLDER_THUMBNAIL_NAMES) {
+            val candidate = try { File(directory, name).canonicalFile } catch (_: IOException) { continue }
+            if (!isInsideSharedStorage(candidate.path)) continue
+            if (candidate.parentFile?.canonicalFile != directory.canonicalFile) continue
+            if (!candidate.isFile || !candidate.canRead()) continue
+            if (candidate.length() !in 1L..MAX_FOLDER_THUMBNAIL_BYTES) continue
+            try {
+                val bytes = candidate.inputStream().use { input ->
+                    val output = ByteArrayOutputStream()
+                    val buffer = ByteArray(8 * 1024)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        if (output.size().toLong() + count.toLong() > MAX_FOLDER_THUMBNAIL_BYTES) return null
+                        output.write(buffer, 0, count)
+                    }
+                    output.toByteArray()
+                }
+                if (bytes.isNotEmpty()) return bytes
+            } catch (_: IOException) {
+                // Try the next supported name if a thumbnail disappears during lookup.
+            } catch (_: SecurityException) {
+                // The Shizuku identity may not be allowed to read this candidate.
+            }
+        }
+        return null
+    }
+
     override fun destroy() {
         System.exit(0)
     }
@@ -119,5 +151,8 @@ class ShizukuStorageUserService : IShizukuStorageService.Stub() {
         const val KEY_SIZE_BYTES = "sizeBytes"
         const val KEY_LAST_MODIFIED = "lastModifiedMillis"
         const val KEY_ABSOLUTE_PATH = "absolutePath"
+        const val MAX_FOLDER_THUMBNAIL_BYTES = 1L * 1024L * 1024L
+        val FOLDER_THUMBNAIL_NAMES = listOf("folder.jpg", "folder.jpeg", "folder.png", "folder.webp",
+            ".foldericon", ".foldericon.jpg", "cover.jpg", "cover.png", "thumbnail.jpg")
     }
 }

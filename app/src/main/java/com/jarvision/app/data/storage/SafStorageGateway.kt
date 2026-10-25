@@ -14,6 +14,12 @@ class SafStorageGateway(
     private val contentResolver: ContentResolver
 ) : StorageGateway {
 
+    private companion object {
+        val FOLDER_THUMBNAIL_NAMES = listOf("folder.jpg", "folder.jpeg", "folder.png", "folder.webp",
+            ".foldericon", ".foldericon.jpg", "cover.jpg", "cover.png", "thumbnail.jpg")
+        const val MAX_FOLDER_THUMBNAIL_BYTES = 1L * 1024L * 1024L
+    }
+
     private val projection = arrayOf(
         DocumentsContract.Document.COLUMN_DOCUMENT_ID,
         DocumentsContract.Document.COLUMN_DISPLAY_NAME,
@@ -29,6 +35,16 @@ class SafStorageGateway(
 
         return cursor.use {
             if (it.moveToFirst()) it.toStorageEntry() else null
+        }
+    }
+
+    fun findFolderThumbnailUri(treeUri: Uri, folderDocumentId: String): Uri? {
+        val children = runCatching { listChildren(treeUri, folderDocumentId) }.getOrNull() ?: return null
+        val byName = children.asSequence()
+            .filter { !it.isDirectory && (it.sizeBytes == null || it.sizeBytes in 1L..MAX_FOLDER_THUMBNAIL_BYTES) }
+            .associateBy { it.displayName.lowercase(Locale.ROOT) }
+        return FOLDER_THUMBNAIL_NAMES.firstNotNullOfOrNull { name ->
+            byName[name]?.let { DocumentsContract.buildDocumentUriUsingTree(treeUri, it.documentId) }
         }
     }
 

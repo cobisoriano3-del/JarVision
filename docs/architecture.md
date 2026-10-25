@@ -6,7 +6,7 @@ JarVision is a universal Android file manager and local development workspace. I
 
 ## Current implementation
 
-The Files tab supports three adapters:
+The Files tab supports three adapters. Folder rows use Coil `AsyncImage` with rounded center-crop thumbnails when a supported image is found directly inside a folder; path state is kept in the ViewModel while the visual path/refresh/change header is omitted.
 - **Shared storage:** direct shared internal-storage listing when Android's all-files special access is granted.
 - **Storage Access Framework:** a persisted user-selected folder grant.
 - **Shizuku (optional):** a bound UserService operating as shell/ADB or root when the user starts Shizuku and explicitly approves JarVision. The current adapter is read-only, confines paths to `/storage/emulated/0`, can list directories and provide a bounded in-app text preview, and does not create, edit, overwrite, or delete files.

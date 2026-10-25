@@ -12,6 +12,7 @@ import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -31,11 +32,17 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Android
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.InsertDriveFile
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -57,9 +64,13 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -71,6 +82,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil3.compose.AsyncImage
+import coil3.request.ImageRequest
+import com.jarvision.app.data.storage.SafStorageGateway
+import com.jarvision.app.data.storage.SharedStorageGateway
 import com.jarvision.app.data.storage.ShizukuStorageAdapter
 import com.jarvision.app.data.storage.StorageEntry
 import kotlinx.coroutines.Dispatchers
@@ -277,7 +292,6 @@ fun FilesScreen(
                 BrowserState(
                     state = state,
                     onNavigateBack = filesViewModel::navigateBack,
-                    onRefresh = filesViewModel::refresh,
                     onChooseFolder = ::chooseFolder,
                     shizukuConnected = shizukuStatus.isConnected,
                     onOpenShizuku = ::openShizukuBrowser,
@@ -401,52 +415,15 @@ private fun StorageAccessRequiredState(
 private fun BrowserState(
     state: FilesUiState,
     onNavigateBack: () -> Unit,
-    onRefresh: () -> Unit,
     onChooseFolder: () -> Unit,
     shizukuConnected: Boolean,
     onOpenShizuku: () -> Unit,
     onOpenEntry: (StorageEntry) -> Unit,
     onRetry: () -> Unit
 ) {
-    val currentLocation = state.currentPath.last()
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 16.dp, vertical = 12.dp)
+        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (state.currentPath.size > 1) {
-                IconButton(onClick = onNavigateBack) {
-                    Icon(Icons.Filled.ArrowBack, contentDescription = "Parent folder")
-                }
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = currentLocation.displayName,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = state.currentPath.joinToString(" / ") { it.displayName },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-            IconButton(onClick = onRefresh) {
-                Icon(Icons.Filled.Refresh, contentDescription = "Refresh folder")
-            }
-            TextButton(onClick = onChooseFolder) {
-                Text("Change")
-            }
-        }
-
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.End
@@ -485,7 +462,7 @@ private fun BrowserState(
                 )
             }
 
-            state.entries.isEmpty() -> {
+            state.entries.isEmpty() && state.currentPath.size <= 1 -> {
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -519,8 +496,13 @@ private fun BrowserState(
                     contentPadding = PaddingValues(bottom = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    if (state.currentPath.size > 1) {
+                        item(key = "__jarvision_parent_folder__") {
+                            ParentFolderRow(onClick = onNavigateBack)
+                        }
+                    }
                     items(state.entries, key = { it.documentId }) { entry ->
-                        FileEntryRow(entry = entry, onClick = { onOpenEntry(entry) })
+                        FileEntryRow(entry = entry, state = state, onClick = { onOpenEntry(entry) })
                     }
                 }
                 Text(
@@ -535,7 +517,84 @@ private fun BrowserState(
 }
 
 @Composable
-private fun FileEntryRow(entry: StorageEntry, onClick: () -> Unit) {
+private fun ParentFolderRow(onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f))
+    ) {
+        Row(Modifier.padding(horizontal = 14.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.ArrowBack, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+            Spacer(Modifier.size(14.dp))
+            Text("Parent folder", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+        }
+    }
+}
+
+@Composable
+private fun FolderThumbnail(entry: StorageEntry, state: FilesUiState) {
+    val context = LocalContext.current
+    val thumbnailModel by produceState<Any?>(
+        initialValue = null,
+        key1 = entry.documentId,
+        key2 = state.accessMode,
+        key3 = state.treeUriString
+    ) {
+        value = withContext(Dispatchers.IO) {
+            runCatching {
+                when (state.accessMode) {
+                    StorageAccessMode.SHARED_STORAGE -> entry.absolutePath?.let {
+                        SharedStorageGateway().findFolderThumbnailFile(it)
+                    }
+                    StorageAccessMode.DOCUMENT_TREE -> {
+                        val treeUri = state.treeUriString?.let { Uri.parse(it) }
+                        if (treeUri == null) null else SafStorageGateway(context.contentResolver)
+                            .findFolderThumbnailUri(treeUri, entry.documentId)
+                    }
+                    StorageAccessMode.SHIZUKU_STORAGE -> entry.absolutePath?.let {
+                        ShizukuStorageAdapter.get(context).loadFolderThumbnail(it)
+                    }
+                    StorageAccessMode.NONE -> null
+                }
+            }.getOrNull()
+        }
+    }
+    var imageFailed by remember(entry.documentId, thumbnailModel) { mutableStateOf(false) }
+    val shape = RoundedCornerShape(10.dp)
+    Box(
+        modifier = Modifier.size(48.dp).clip(shape).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)),
+        contentAlignment = Alignment.Center
+    ) {
+        if (thumbnailModel != null && !imageFailed) {
+            AsyncImage(
+                model = ImageRequest.Builder(context).data(thumbnailModel).crossfade(true).build(),
+                contentDescription = "Thumbnail for ${entry.displayName}",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize().clip(shape),
+                onError = { imageFailed = true }
+            )
+        } else {
+            Icon(imageVector = fallbackFolderImage(entry.displayName), contentDescription = "Folder",
+                tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+        }
+    }
+}
+
+private fun fallbackFolderImage(folderName: String): ImageVector {
+    val name = folderName.lowercase(Locale.ROOT)
+    return when {
+        "android" in name || name == "data" || name == "obb" -> Icons.Filled.Android
+        "picture" in name || "image" in name || "dcim" in name -> Icons.Filled.Image
+        "download" in name -> Icons.Filled.Download
+        "music" in name || "audio" in name -> Icons.Filled.MusicNote
+        "movie" in name || "video" in name -> Icons.Filled.Movie
+        "archive" in name || name.endsWith(".zip") || name.endsWith(".7z") -> Icons.Filled.Archive
+        else -> Icons.Filled.Folder
+    }
+}
+
+@Composable
+private fun FileEntryRow(entry: StorageEntry, state: FilesUiState, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -549,12 +608,12 @@ private fun FileEntryRow(entry: StorageEntry, onClick: () -> Unit) {
             modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = if (entry.isDirectory) Icons.Filled.Folder else Icons.Filled.InsertDriveFile,
-                contentDescription = if (entry.isDirectory) "Folder" else "File",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(28.dp)
-            )
+            if (entry.isDirectory) {
+                FolderThumbnail(entry = entry, state = state)
+            } else {
+                Icon(imageVector = Icons.Filled.InsertDriveFile, contentDescription = "File",
+                    tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+            }
             Spacer(Modifier.size(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(

@@ -1,5 +1,6 @@
 package com.jarvision.app
 
+import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithText
@@ -16,7 +17,7 @@ class MainActivityTest {
 
     @Test
     fun appLaunchesIntoFilesDestination() {
-        composeRule.onNodeWithText("JarVision").assertIsDisplayed()
+        composeRule.onNodeWithText("JarVision").assertDoesNotExist()
         composeRule.onNodeWithText("Files").assertIsDisplayed()
     }
 

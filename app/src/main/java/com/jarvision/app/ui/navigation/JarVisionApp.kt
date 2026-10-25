@@ -66,7 +66,7 @@ fun JarVisionApp() {
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("JarVision") },
+                title = {},
                 navigationIcon = {
                     if (currentRoute !in primaryRoutes) {
                         IconButton(onClick = {
