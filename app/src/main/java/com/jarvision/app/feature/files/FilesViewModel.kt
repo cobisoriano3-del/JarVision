@@ -120,7 +120,7 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 getApplication<Application>().contentResolver.takePersistableUriPermission(
                     treeUri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
                 preferences.edit().putString(KEY_TREE_URI, treeUri.toString()).apply()
                 openTreeAndLoadRoot(treeUri.toString())

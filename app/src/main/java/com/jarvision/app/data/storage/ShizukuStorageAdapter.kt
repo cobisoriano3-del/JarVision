@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import rikka.shizuku.Shizuku
 import java.io.ByteArrayOutputStream
 import java.io.IOException
+import java.io.InputStream
 import java.nio.charset.StandardCharsets
 import java.util.Locale
 
@@ -257,6 +258,17 @@ class ShizukuStorageAdapter private constructor(context: Context) {
         } catch (error: RemoteException) {
             throw IOException(error.message ?: "Shizuku couldn't load this folder thumbnail.", error)
         }
+    }
+
+    /** Opens a read-only stream for archive validation or explicit sharing. */
+    fun openReadOnlyInputStream(path: String): InputStream {
+        val service = requireService()
+        val descriptor = try {
+            service.openFileReadOnly(path)
+        } catch (error: RemoteException) {
+            throw IOException(error.message ?: "Shizuku couldn't open this file.", error)
+        } ?: throw IOException("Shizuku returned no file descriptor.")
+        return ParcelFileDescriptor.AutoCloseInputStream(descriptor)
     }
 
     /**

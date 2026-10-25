@@ -6,10 +6,10 @@ JarVision is a universal Android file manager and local development workspace. I
 
 ## Current implementation
 
-The Files tab supports three adapters. Folder rows use Coil `AsyncImage` with rounded center-crop thumbnails when a supported image is found directly inside a folder; path state is kept in the ViewModel while the visual path/refresh/change header is omitted.
+The Files tab supports three adapters. Folder rows use Coil `AsyncImage` with rounded center-crop thumbnails when a supported image is found directly inside a folder; path state is kept in the ViewModel while the visual path/refresh/change header is omitted. File and folder rows support long-press contextual menus. Writable shared-storage and SAF scopes implement information, share, copy, cut/paste, rename, confirmed delete, ZIP testing, and ZIP extraction here or into a separate folder. Archive extraction is staged in private cache and rejects unsafe paths and excessive expansion.
 - **Shared storage:** direct shared internal-storage listing when Android's all-files special access is granted.
 - **Storage Access Framework:** a persisted user-selected folder grant.
-- **Shizuku (optional):** a bound UserService operating as shell/ADB or root when the user starts Shizuku and explicitly approves JarVision. The current adapter is read-only, confines paths to `/storage/emulated/0`, can list directories and provide a bounded in-app text preview, and does not create, edit, overwrite, or delete files.
+- **Shizuku (optional):** a bound UserService operating as shell/ADB or root when the user starts Shizuku and explicitly approves JarVision. The current adapter is read-only, confines paths to `/storage/emulated/0`, can list directories, provide a bounded in-app text preview, validate ZIP archives and read protected files into a bounded private-cache copy when the user explicitly chooses Open/Share. It does not create, edit, overwrite, rename, move, or delete source files.
 
 The Shizuku process identity is not guaranteed to be root. Shell/ADB can read some folders on some devices but cannot access all app-private data. Access to each protected path is runtime-checked; errors are shown instead of promising universal access.
 
@@ -38,7 +38,10 @@ The app remains one Gradle application module (`:app`) with package-level featur
 
 - Shizuku service is restricted to read-only directory listing and read-only file descriptors.
 - Validate every Shizuku path against shared internal storage; reject symlinks whose canonical target escapes that root.
-- The normal app process may preview only small text files from Shizuku, with a 1 MiB cap; binary/large files fail clearly.
+- The normal app process may preview only small text files from Shizuku, with a 1 MiB cap. Explicit Open/Share can stage a read-only copy in app cache, capped at 512 MiB; source files remain unchanged.
+- ZIP tests and extraction enforce path safety, duplicate-entry rejection, a 10,000-entry limit, a 256 MiB per-entry expanded limit, and 1 GiB total expansion limit.
+- Copy/cut/paste is limited to one active writable storage scope and selected SAF tree. Cut copies first and removes the source only after the destination copy succeeds.
+- Replace and delete are confirmed by the UI. No operation silently overwrites an existing destination; copy conflicts offer Keep both or Replace.
 - Never overwrite silently; offer skip, rename, or replace where applicable when write features are later added.
 - Prefer recoverable deletion where possible and distinguish permanent deletion explicitly.
 - Project files live in a private app-managed workspace by default. Database rows should store metadata, recents, favorites, preferences, and operation history—not entire source files.
@@ -59,10 +62,10 @@ The app remains one Gradle application module (`:app`) with package-level featur
 1. Build foundation and navigation — complete.
 2. Storage abstraction and real file browser — initial implementation.
 3. Optional read-only Shizuku storage connection — in implementation; device permissions determine exact reach.
-4. Safe operations, search, selection, and contextual menus.
+4. Initial contextual file operations and ZIP-only archive actions — implemented; add operation progress, recoverable trash, selection, and favorites next.
 5. Persistent universal projects and explicit import/export.
 6. Editor integration and recovery.
-7. ZIP support, then expand archive formats through tests.
+7. ZIP validation and extraction — first implementation with path/size limits; expand archive formats through tests.
 8. Optional Dual Space, inspection tools, and device testing.
 
 Every milestone needs acceptance tests before the next milestone depends on it.

@@ -9,11 +9,25 @@ import android.os.Build
 import android.os.Environment
 import android.provider.DocumentsContract
 import android.provider.Settings
+import android.webkit.MimeTypeMap
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import java.io.IOException
+import com.jarvision.app.data.storage.ZipArchiveTestResult
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material.icons.filled.Share
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -97,6 +111,23 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+private data class PendingFileClipboard(
+    val entry: StorageEntry,
+    val accessMode: StorageAccessMode,
+    val treeUriString: String?,
+    val sourceParentDocumentId: String,
+    val sourceParentAbsolutePath: String?,
+    val isCut: Boolean
+)
+
+private data class PasteConflict(
+    val clipboard: PendingFileClipboard,
+    val existing: StorageEntry,
+    val destination: FolderLocation,
+    val sameSource: Boolean
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FilesScreen(
     filesViewModel: FilesViewModel = viewModel()
@@ -107,9 +138,19 @@ fun FilesScreen(
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
     val shizukuAdapter = remember(context) { ShizukuStorageAdapter.get(context) }
+    val fileOperations = remember(context, shizukuAdapter) {
+        FileOperationCoordinator(context, shizukuAdapter)
+    }
     val shizukuStatus by shizukuAdapter.status.collectAsState()
     var shouldOpenShizukuAfterConnect by remember { mutableStateOf(false) }
     var previewContent by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var selectedEntry by remember { mutableStateOf<StorageEntry?>(null) }
+    var informationEntry by remember { mutableStateOf<StorageEntry?>(null) }
+    var renameEntry by remember { mutableStateOf<StorageEntry?>(null) }
+    var renameName by remember { mutableStateOf("") }
+    var deleteEntry by remember { mutableStateOf<StorageEntry?>(null) }
+    var clipboard by remember { mutableStateOf<PendingFileClipboard?>(null) }
+    var pasteConflict by remember { mutableStateOf<PasteConflict?>(null) }
 
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -211,9 +252,31 @@ fun FilesScreen(
                     }
                     previewContent = entry.displayName to contents
                 } catch (error: Exception) {
-                    snackbarHostState.showSnackbar(
-                        error.message ?: "Couldn't read this file through Shizuku."
-                    )
+                    if (isLikelyTextFile(entry.displayName)) {
+                        snackbarHostState.showSnackbar(
+                            error.message ?: "Couldn't read this file through Shizuku."
+                        )
+                    } else {
+                        try {
+                            val cachedFile = withContext(Dispatchers.IO) {
+                                fileOperations.stageShareCopy(state.accessMode, state.treeUriString, entry)
+                            }
+                            val uri = FileProvider.getUriForFile(
+                                context,
+                                context.packageName + ".fileprovider",
+                                cachedFile
+                            )
+                            val intent = Intent(Intent.ACTION_VIEW)
+                                .setDataAndType(uri, bestMimeType(entry))
+                                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            intent.clipData = ClipData.newUri(context.contentResolver, entry.displayName, uri)
+                            context.startActivity(intent)
+                        } catch (openError: Exception) {
+                            snackbarHostState.showSnackbar(
+                                openError.message ?: "No installed app could open this protected file."
+                            )
+                        }
+                    }
                 }
             }
             return
@@ -244,7 +307,7 @@ fun FilesScreen(
         }
 
         val intent = Intent(Intent.ACTION_VIEW)
-            .setDataAndType(fileUri, entry.mimeType ?: "*/*")
+            .setDataAndType(fileUri, bestMimeType(entry))
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         intent.clipData = ClipData.newUri(context.contentResolver, entry.displayName, fileUri)
 
@@ -257,6 +320,284 @@ fun FilesScreen(
         } catch (_: SecurityException) {
             coroutineScope.launch {
                 snackbarHostState.showSnackbar("Android denied access to this file.")
+            }
+        }
+    }
+
+    fun showMessage(message: String) {
+        coroutineScope.launch { snackbarHostState.showSnackbar(message) }
+    }
+
+    fun stageClipboard(entry: StorageEntry, cut: Boolean) {
+        val parent = state.currentPath.lastOrNull() ?: return
+        if (state.accessMode == StorageAccessMode.SHIZUKU_STORAGE ||
+            state.accessMode == StorageAccessMode.NONE
+        ) {
+            showMessage("Copy and cut are unavailable in this storage mode.")
+            selectedEntry = null
+            return
+        }
+        clipboard = PendingFileClipboard(
+            entry = entry,
+            accessMode = state.accessMode,
+            treeUriString = state.treeUriString,
+            sourceParentDocumentId = parent.documentId,
+            sourceParentAbsolutePath = parent.absolutePath,
+            isCut = cut
+        )
+        selectedEntry = null
+        showMessage(if (cut) "Item marked for moving. Navigate to a destination and tap Paste."
+            else "Item copied to JarVision's clipboard. Navigate to a destination and tap Paste.")
+    }
+
+    fun executePaste(
+        pending: PendingFileClipboard,
+        keepBoth: Boolean,
+        replaceExisting: Boolean
+    ) {
+        val destination = state.currentPath.lastOrNull() ?: return
+        if (pending.accessMode != state.accessMode ||
+            pending.treeUriString != state.treeUriString ||
+            state.accessMode == StorageAccessMode.SHIZUKU_STORAGE
+        ) {
+            showMessage("Paste is limited to the same writable storage scope.")
+            pasteConflict = null
+            return
+        }
+        if (pending.entry.isDirectory && state.currentPath.any {
+                it.documentId == pending.entry.documentId
+            }
+        ) {
+            showMessage("A folder can't be pasted into itself or one of its subfolders.")
+            pasteConflict = null
+            return
+        }
+        if (pending.isCut) {
+            val sameParent = if (state.accessMode == StorageAccessMode.SHARED_STORAGE) {
+                pending.sourceParentAbsolutePath == destination.absolutePath
+            } else {
+                pending.sourceParentDocumentId == destination.documentId
+            }
+            if (sameParent) {
+                clipboard = null
+                pasteConflict = null
+                showMessage("This item is already in that folder.")
+                return
+            }
+        }
+        coroutineScope.launch {
+            try {
+                val message = withContext(Dispatchers.IO) {
+                    var targetName = pending.entry.displayName
+                    if (keepBoth) {
+                        val original = pending.entry.displayName
+                        val dot = original.lastIndexOf('.')
+                        val base = if (dot > 0) original.substring(0, dot) else original
+                        val extension = if (dot > 0) original.substring(dot) else ""
+                        var suffix = 1
+                        while (fileOperations.findNamedChild(
+                                state.accessMode, state.treeUriString,
+                                destination.documentId, destination.absolutePath, targetName
+                            ) != null
+                        ) {
+                            targetName = base + " (" + suffix + ")" + extension
+                            suffix++
+                            if (suffix > 10000) throw IOException("Couldn't find an unused copy name.")
+                        }
+                    }
+                    fileOperations.copyOrMove(
+                        mode = state.accessMode,
+                        treeUriString = state.treeUriString,
+                        source = pending.entry,
+                        destinationParentDocumentId = destination.documentId,
+                        destinationParentAbsolutePath = destination.absolutePath,
+                        targetName = targetName,
+                        moveSource = pending.isCut,
+                        replaceExisting = replaceExisting
+                    )
+                }
+                clipboard = null
+                pasteConflict = null
+                filesViewModel.refresh()
+                showMessage(message)
+            } catch (error: Exception) {
+                showMessage(error.message ?: "The file operation failed.")
+            }
+        }
+    }
+
+    fun requestPaste() {
+        val pending = clipboard ?: return
+        val destination = state.currentPath.lastOrNull() ?: return
+        if (pending.accessMode != state.accessMode || pending.treeUriString != state.treeUriString ||
+            state.accessMode == StorageAccessMode.SHIZUKU_STORAGE
+        ) {
+            showMessage("Paste is limited to the same writable storage scope.")
+            return
+        }
+        if (pending.entry.isDirectory && state.currentPath.any { it.documentId == pending.entry.documentId }) {
+            showMessage("A folder can't be pasted into itself or one of its subfolders.")
+            return
+        }
+        coroutineScope.launch {
+            try {
+                val conflict = withContext(Dispatchers.IO) {
+                    fileOperations.findNamedChild(
+                        state.accessMode, state.treeUriString,
+                        destination.documentId, destination.absolutePath,
+                        pending.entry.displayName
+                    )
+                }
+                if (conflict != null) {
+                    val sameSource = if (state.accessMode == StorageAccessMode.SHARED_STORAGE) {
+                        pending.entry.absolutePath == conflict.absolutePath
+                    } else {
+                        pending.entry.documentId == conflict.documentId
+                    }
+                    pasteConflict = PasteConflict(
+                        clipboard = pending,
+                        existing = conflict,
+                        destination = destination,
+                        sameSource = sameSource
+                    )
+                } else {
+                    executePaste(pending, keepBoth = false, replaceExisting = false)
+                }
+            } catch (error: Exception) {
+                showMessage(error.message ?: "Couldn't check the paste destination.")
+            }
+        }
+    }
+
+    fun renameSelected(entry: StorageEntry, newName: String) {
+        val parent = state.currentPath.lastOrNull() ?: return
+        coroutineScope.launch {
+            try {
+                withContext(Dispatchers.IO) {
+                    fileOperations.rename(
+                        state.accessMode, state.treeUriString, entry,
+                        parent.documentId, parent.absolutePath, newName
+                    )
+                }
+                renameEntry = null
+                filesViewModel.refresh()
+                showMessage("Renamed successfully.")
+            } catch (error: Exception) {
+                showMessage(error.message ?: "Couldn't rename this item.")
+            }
+        }
+    }
+
+    fun deleteSelected(entry: StorageEntry) {
+        coroutineScope.launch {
+            try {
+                withContext(Dispatchers.IO) { fileOperations.delete(state.accessMode, state.treeUriString, entry) }
+                deleteEntry = null
+                filesViewModel.refresh()
+                showMessage("Deleted successfully.")
+            } catch (error: Exception) {
+                showMessage(error.message ?: "Couldn't delete this item.")
+            }
+        }
+    }
+
+    fun shareSelected(entry: StorageEntry) {
+        selectedEntry = null
+        if (entry.isDirectory) {
+            showMessage("Select a file to share.")
+            return
+        }
+        coroutineScope.launch {
+            try {
+                val uri = withContext(Dispatchers.IO) {
+                    when (state.accessMode) {
+                        StorageAccessMode.SHARED_STORAGE -> FileProvider.getUriForFile(
+                            context, context.packageName + ".fileprovider",
+                            File(entry.absolutePath ?: entry.documentId)
+                        )
+                        StorageAccessMode.DOCUMENT_TREE -> DocumentsContract.buildDocumentUriUsingTree(
+                            Uri.parse(state.treeUriString ?: throw IOException("No selected folder permission.")),
+                            entry.documentId
+                        )
+                        StorageAccessMode.SHIZUKU_STORAGE -> FileProvider.getUriForFile(
+                            context, context.packageName + ".fileprovider",
+                            fileOperations.stageShareCopy(state.accessMode, state.treeUriString, entry)
+                        )
+                        StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
+                    }
+                }
+                val send = Intent(Intent.ACTION_SEND).apply {
+                    type = bestMimeType(entry)
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    clipData = ClipData.newUri(context.contentResolver, entry.displayName, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(send, "Share " + entry.displayName))
+            } catch (error: Exception) {
+                showMessage(error.message ?: "Couldn't share this file.")
+            }
+        }
+    }
+
+    fun testArchive(entry: StorageEntry) {
+        selectedEntry = null
+        coroutineScope.launch {
+            try {
+                val result: ZipArchiveTestResult = withContext(Dispatchers.IO) {
+                    fileOperations.testZip(state.accessMode, state.treeUriString, entry)
+                }
+                showMessage(
+                    "ZIP test passed: " + result.fileCount + " files, " +
+                        result.directoryCount + " folders, " + formatBytes(result.expandedBytes) + " expanded."
+                )
+            } catch (error: Exception) {
+                showMessage(error.message ?: "ZIP test failed.")
+            }
+        }
+    }
+
+    fun extractArchiveHere(entry: StorageEntry) {
+        selectedEntry = null
+        val destination = state.currentPath.lastOrNull() ?: return
+        if (state.accessMode == StorageAccessMode.SHIZUKU_STORAGE) {
+            showMessage("Extraction is disabled in read-only Shizuku mode.")
+            return
+        }
+        coroutineScope.launch {
+            try {
+                val message = withContext(Dispatchers.IO) {
+                    fileOperations.extractZipHere(
+                        state.accessMode, state.treeUriString, entry,
+                        destination.documentId, destination.absolutePath
+                    )
+                }
+                filesViewModel.refresh()
+                showMessage(message)
+            } catch (error: Exception) {
+                showMessage(error.message ?: "Couldn't extract this ZIP here.")
+            }
+        }
+    }
+
+    fun extractArchive(entry: StorageEntry) {
+        selectedEntry = null
+        val destination = state.currentPath.lastOrNull() ?: return
+        if (state.accessMode == StorageAccessMode.SHIZUKU_STORAGE) {
+            showMessage("Extraction is disabled in read-only Shizuku mode.")
+            return
+        }
+        coroutineScope.launch {
+            try {
+                val folderName = withContext(Dispatchers.IO) {
+                    fileOperations.extractZipToFolder(
+                        state.accessMode, state.treeUriString, entry,
+                        destination.documentId, destination.absolutePath
+                    )
+                }
+                filesViewModel.refresh()
+                showMessage("Extracted to " + folderName + "/")
+            } catch (error: Exception) {
+                showMessage(error.message ?: "Couldn't extract this ZIP.")
             }
         }
     }
@@ -300,6 +641,14 @@ fun FilesScreen(
                         if (entry.isDirectory) filesViewModel.navigateInto(entry)
                         else openFile(entry)
                     },
+                    onLongPressEntry = { entry -> selectedEntry = entry },
+                    clipboardPresent = clipboard != null,
+                    canPaste = clipboard?.let {
+                        it.accessMode == state.accessMode &&
+                            it.treeUriString == state.treeUriString &&
+                            state.accessMode != StorageAccessMode.SHIZUKU_STORAGE
+                    } == true,
+                    onPaste = ::requestPaste,
                     onRetry = filesViewModel::refresh
                 )
             }
@@ -309,6 +658,153 @@ fun FilesScreen(
             hostState = snackbarHostState,
             modifier = Modifier.align(Alignment.BottomCenter)
         )
+
+        selectedEntry?.let { entry ->
+            val canMutateFiles = when (state.accessMode) {
+                StorageAccessMode.SHARED_STORAGE -> true
+                StorageAccessMode.DOCUMENT_TREE -> state.treeUriString?.let { value ->
+                    context.contentResolver.persistedUriPermissions.any {
+                        it.uri == Uri.parse(value) && it.isWritePermission
+                    }
+                } == true
+                else -> false
+            }
+            ModalBottomSheet(onDismissRequest = { selectedEntry = null }) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp)
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        entry.displayName,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.padding(bottom = 10.dp)
+                    )
+                    ContextActionRow("Open / View", Icons.Filled.FolderOpen) {
+                        selectedEntry = null
+                        if (entry.isDirectory) filesViewModel.navigateInto(entry) else openFile(entry)
+                    }
+                    ContextActionRow("Information", Icons.Filled.Info) {
+                        selectedEntry = null
+                        informationEntry = entry
+                    }
+                    if (!entry.isDirectory) {
+                        ContextActionRow("Share", Icons.Filled.Share) { shareSelected(entry) }
+                    }
+                    if (canMutateFiles) {
+                        ContextActionRow("Copy", Icons.Filled.ContentCopy) { stageClipboard(entry, false) }
+                        ContextActionRow("Cut", Icons.Filled.ContentCut) { stageClipboard(entry, true) }
+                        ContextActionRow("Rename", Icons.Filled.Edit) {
+                            selectedEntry = null
+                            renameName = entry.displayName
+                            renameEntry = entry
+                        }
+                        ContextActionRow("Delete", Icons.Filled.Delete) {
+                            selectedEntry = null
+                            deleteEntry = entry
+                        }
+                    }
+                    if (!entry.isDirectory && entry.displayName.lowercase(Locale.ROOT).endsWith(".zip")) {
+                        ContextActionRow("Test archive", Icons.Filled.Archive) { testArchive(entry) }
+                        if (canMutateFiles) {
+                            ContextActionRow("Extract here", Icons.Filled.Archive) { extractArchiveHere(entry) }
+                            ContextActionRow("Extract to folder", Icons.Filled.FolderOpen) { extractArchive(entry) }
+                        }
+                    }
+                    Spacer(Modifier.height(24.dp))
+                }
+            }
+        }
+
+        informationEntry?.let { entry ->
+            val info = buildString {
+                append("Name: ").append(entry.displayName).append('\n')
+                append("Type: ").append(if (entry.isDirectory) "Folder" else entry.mimeType ?: "Unknown").append('\n')
+                append("Size: ").append(if (entry.isDirectory) "—" else entry.sizeBytes?.let { formatBytes(it) } ?: "Unknown").append('\n')
+                entry.lastModifiedMillis?.let {
+                    append("Modified: ").append(SimpleDateFormat("MMM d, yyyy HH:mm", Locale.getDefault()).format(Date(it))).append('\n')
+                }
+                append("Location: ").append(entry.absolutePath ?: entry.documentId)
+            }
+            AlertDialog(
+                onDismissRequest = { informationEntry = null },
+                title = { Text("Information") },
+                text = { Text(info) },
+                confirmButton = {
+                    TextButton(onClick = { informationEntry = null }) { Text("Close") }
+                }
+            )
+        }
+
+        renameEntry?.let { entry ->
+            AlertDialog(
+                onDismissRequest = { renameEntry = null },
+                title = { Text("Rename item") },
+                text = {
+                    OutlinedTextField(
+                        value = renameName,
+                        onValueChange = { renameName = it },
+                        label = { Text("Name") },
+                        singleLine = true
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { renameSelected(entry, renameName) }) { Text("Rename") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { renameEntry = null }) { Text("Cancel") }
+                }
+            )
+        }
+
+        deleteEntry?.let { entry ->
+            AlertDialog(
+                onDismissRequest = { deleteEntry = null },
+                title = { Text("Delete " + entry.displayName + "?") },
+                text = {
+                    Text(
+                        if (entry.isDirectory) "This removes the folder and its contents. This cannot be undone."
+                        else "This permanently deletes the selected file. This cannot be undone."
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { deleteSelected(entry) }) { Text("Delete") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { deleteEntry = null }) { Text("Cancel") }
+                }
+            )
+        }
+
+        pasteConflict?.let { conflict ->
+            AlertDialog(
+                onDismissRequest = { pasteConflict = null },
+                title = { Text("An item already exists") },
+                text = {
+                    Text(
+                        "A destination item named '" + conflict.existing.displayName +
+                            "' already exists. Choose Keep both to create a unique name, or Replace to overwrite it."
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { executePaste(conflict.clipboard, keepBoth = true, replaceExisting = false) }) {
+                        Text("Keep both")
+                    }
+                },
+                dismissButton = {
+                    Row {
+                        if (!conflict.sameSource) {
+                            TextButton(onClick = { executePaste(conflict.clipboard, keepBoth = false, replaceExisting = true) }) {
+                                Text("Replace")
+                            }
+                        }
+                        TextButton(onClick = { pasteConflict = null }) { Text("Cancel") }
+                    }
+                }
+            )
+        }
 
         previewContent?.let { (fileName, textContent) ->
             AlertDialog(
@@ -420,15 +916,34 @@ private fun BrowserState(
     shizukuConnected: Boolean,
     onOpenShizuku: () -> Unit,
     onOpenEntry: (StorageEntry) -> Unit,
+    onLongPressEntry: (StorageEntry) -> Unit,
+    clipboardPresent: Boolean,
+    canPaste: Boolean,
+    onPaste: () -> Unit,
     onRetry: () -> Unit
 ) {
+    val context = LocalContext.current
+    val hasSafWriteGrant = state.treeUriString?.let { value ->
+        context.contentResolver.persistedUriPermissions.any {
+            it.uri == Uri.parse(value) && it.isWritePermission
+        }
+    } == true
     Column(
         modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
         ) {
+            if (clipboardPresent) {
+                TextButton(onClick = onPaste, enabled = canPaste) {
+                    Text(if (canPaste) "Paste" else "Paste unavailable")
+                }
+            }
+            if (state.accessMode == StorageAccessMode.DOCUMENT_TREE && !hasSafWriteGrant) {
+                TextButton(onClick = onChooseFolder) { Text("Grant write access") }
+            }
             TextButton(onClick = onOpenShizuku) {
                 Text(if (shizukuConnected) "Browse protected folders" else "Connect Shizuku")
             }
@@ -503,7 +1018,12 @@ private fun BrowserState(
                         }
                     }
                     items(state.entries, key = { it.documentId }) { entry ->
-                        FileEntryRow(entry = entry, state = state, onClick = { onOpenEntry(entry) })
+                        FileEntryRow(
+                            entry = entry,
+                            state = state,
+                            onClick = { onOpenEntry(entry) },
+                            onLongClick = { onLongPressEntry(entry) }
+                        )
                     }
                 }
                 Text(
@@ -594,12 +1114,18 @@ private fun fallbackFolderImage(folderName: String): ImageVector {
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun FileEntryRow(entry: StorageEntry, state: FilesUiState, onClick: () -> Unit) {
+private fun FileEntryRow(
+    entry: StorageEntry,
+    state: FilesUiState,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f)
@@ -648,6 +1174,31 @@ private fun FileEntryRow(entry: StorageEntry, state: FilesUiState, onClick: () -
 }
 
 @Composable
+private fun ContextActionRow(
+    title: String,
+    image: ImageVector,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .padding(horizontal = 8.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Icon(
+            imageVector = image,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(24.dp)
+        )
+        Spacer(Modifier.size(18.dp))
+        Text(title, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+@Composable
 private fun LoadingState() {
     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -691,6 +1242,22 @@ private fun ErrorState(
             Button(onClick = onChooseFolder) { Text("Choose folder") }
         }
     }
+}
+
+private fun bestMimeType(entry: StorageEntry): String {
+    val existing = entry.mimeType?.takeIf { it.isNotBlank() && it != "application/octet-stream" }
+    if (existing != null) return existing
+    val extension = entry.displayName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+    return MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension) ?: "*/*"
+}
+
+private fun isLikelyTextFile(name: String): Boolean {
+    val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+    return extension in setOf(
+        "txt", "md", "json", "xml", "yaml", "yml", "toml", "properties",
+        "kt", "kts", "java", "py", "js", "ts", "html", "css", "log",
+        "cfg", "ini", "csv", "sh", "gradle", "sql", "c", "h", "cpp", "rs"
+    )
 }
 
 private fun entryDetails(entry: StorageEntry): String {

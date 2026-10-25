@@ -13,9 +13,11 @@ JarVision is a native Android file manager and universal code workspace. It aims
 
 ## Current status
 
-**Implemented:** a single-pane file browser with Android all-files access, a Storage Access Framework fallback, optional read-only Shizuku browsing, and Coil-powered folder thumbnails. The thumbnail loader checks `folder.jpg`, `folder.jpeg`, `folder.png`, `folder.webp`, `.foldericon`, `.foldericon.jpg`, `cover.jpg`, `cover.png`, or `thumbnail.jpg` inside each folder. Shizuku thumbnails use a size-bounded, read-only service call. Missing or inaccessible images use a folder-name-based fallback icon.
+**Implemented:** a single-pane file browser with Android all-files access, a Storage Access Framework fallback, optional read-only Shizuku browsing, Coil-powered folder thumbnails, and long-press contextual actions. For writable shared-storage and SAF locations, item actions include information, share, copy, cut/paste, rename, and confirmed delete. Copy and cut/paste operate within the same selected storage scope; conflicts require an explicit Keep both or Replace choice. SAF mutations require a persisted write grant. Shizuku remains read-only: it can list, preview small text files, validate ZIP archives, and stage explicitly shared/opened files through a bounded temporary cache, but it cannot modify source items.
 
-**Still planned:** safe copy/move/delete/rename, favorites, search and selection, archive operations, persistent project workspaces, the universal editor, Dual Space, and broader privileged operations.
+ZIP support includes archive testing and extraction here or into a new folder for writable storage scopes. Extraction rejects absolute/traversal paths, duplicate normalized entries, more than 10,000 entries, any entry over 256 MiB expanded, and total expansion over 1 GiB. Output is staged in private cache and path-checked before it is copied into storage. The folder-thumbnail loader checks `folder.jpg`, `folder.jpeg`, `folder.png`, `folder.webp`, `.foldericon`, `.foldericon.jpg`, `cover.jpg`, `cover.png`, or `thumbnail.jpg` inside each folder. Missing or inaccessible images use a folder-name-based fallback icon.
+
+**Still planned:** favorites, global search and multi-selection, persistent project workspaces, the universal editor, Dual Space, recoverable trash, background/progress reporting for large operations, broader archive formats such as 7z, and additional device/provider testing.
 
 ## Storage permissions and platform limits
 
