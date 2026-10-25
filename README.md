@@ -28,21 +28,31 @@ Versions are pinned. Recheck the official Android Gradle Plugin / Gradle / Kotli
 
 ## Build
 
-Requirements: JDK 17 or newer, Android SDK platform 36, and Gradle 8.13 installed locally.
+Requirements: JDK 17 or newer and Android SDK platform 36. The Gradle wrapper downloads the pinned Gradle 8.13 distribution and verifies its SHA-256 checksum.
 
+macOS/Linux:
 ```sh
-gradle assembleDebug
-gradle testDebugUnitTest
-gradle connectedDebugAndroidTest
+./gradlew --version
+./gradlew assembleDebug
+./gradlew testDebugUnitTest
+./gradlew connectedDebugAndroidTest
 ```
 
-On Windows, use the same tasks with `gradle.bat`. Instrumentation tests require an emulator or connected Android device. After a successful build, the debug APK is at `app/build/outputs/apk/debug/app-debug.apk`.
+Windows:
+```bat
+gradlew.bat --version
+gradlew.bat assembleDebug
+gradlew.bat testDebugUnitTest
+gradlew.bat connectedDebugAndroidTest
+```
 
-**Gradle wrapper status:** standard wrapper scripts and the binary wrapper JAR are not included in this initial remote scaffold because the connected GitHub integration rejects binary wrapper content. I did not commit broken wrapper scripts. A standard wrapper should be generated and committed from a local Gradle 8.13 installation before describing command-line builds as self-contained.
+Instrumentation tests require an emulator or connected Android device. After a successful build, the debug APK is at `app/build/outputs/apk/debug/app-debug.apk`.
+
+The wrapper consists of the checked-in launcher scripts, `gradle/wrapper/gradle-wrapper.jar`, and `gradle/wrapper/gradle-wrapper.properties`. Keep these files together. When intentionally upgrading Gradle, update the distribution URL and checksum together and verify the official checksum before committing.
 
 Android Auto Backup is disabled in the starter manifest so future project files are not silently swept into OS-managed backups. A dedicated, user-controlled backup/export flow is planned separately.
 
-The manual-only workflow at `.github/workflows/android-build.yml` can compile, test, and upload a debug APK once it is available from the default branch. No build has been run yet.
+The manual-only workflow at `.github/workflows/android-build.yml` uses the wrapper to compile, test, and upload a debug APK. No build has been run yet.
 
 ## Documentation
 
