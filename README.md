@@ -40,6 +40,8 @@ On Windows, use the same tasks with `gradle.bat`. Instrumentation tests require 
 
 **Gradle wrapper status:** standard wrapper scripts and the binary wrapper JAR are not included in this initial remote scaffold because the connected GitHub integration rejects binary wrapper content. I did not commit broken wrapper scripts. A standard wrapper should be generated and committed from a local Gradle 8.13 installation before describing command-line builds as self-contained.
 
+Android Auto Backup is disabled in the starter manifest so future project files are not silently swept into OS-managed backups. A dedicated, user-controlled backup/export flow is planned separately.
+
 The manual-only workflow at `.github/workflows/android-build.yml` can compile, test, and upload a debug APK once it is available from the default branch. No build has been run yet.
 
 ## Documentation
