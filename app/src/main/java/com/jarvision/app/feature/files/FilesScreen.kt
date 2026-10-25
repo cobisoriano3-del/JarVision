@@ -175,7 +175,7 @@ fun FilesScreen(
         val intent = Intent(Intent.ACTION_VIEW)
             .setDataAndType(fileUri, entry.mimeType ?: "*/*")
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            .setClipData(ClipData.newUri(context.contentResolver, entry.displayName, fileUri))
+        intent.clipData = ClipData.newUri(context.contentResolver, entry.displayName, fileUri)
 
         try {
             context.startActivity(intent)
