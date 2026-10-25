@@ -52,7 +52,7 @@ The wrapper consists of the checked-in launcher scripts, `gradle/wrapper/gradle-
 
 Android Auto Backup is disabled in the starter manifest so future project files are not silently swept into OS-managed backups. A dedicated, user-controlled backup/export flow is planned separately.
 
-The GitHub Actions workflow at `.github/workflows/android-build.yml` runs on pushes to `main` and can also be started manually from the Actions tab. It compiles the debug APK, runs JVM tests, runs the Android emulator smoke test, and uploads an artifact named `jarvision-debug-apk` if every required stage succeeds. Open the workflow run and download the artifact from its Artifacts section.
+The GitHub Actions workflow at `.github/workflows/android-build.yml` runs on pushes to `main` and can also be started manually from the Actions tab. It builds the debug APK and runs JVM tests, configures Linux KVM permissions for the Android emulator, and runs an instrumentation smoke test. The APK artifact `jarvision-debug-apk` is uploaded whenever the compile/JVM-test step succeeds, even if the later emulator startup or instrumentation test fails. Open the workflow run and download the artifact from its Artifacts section.
 
 ## Documentation
 
