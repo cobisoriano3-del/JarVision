@@ -13,7 +13,7 @@ JarVision is a native Android file manager and universal code workspace. It aims
 
 ## Current status
 
-This `foundation` branch contains the Android project configuration, navigation shell, feature boundaries, product/architecture notes, a smoke-test scaffold, and a manual-only Android build workflow. File operations, the editor engine, archive processing, project persistence, and Shizuku actions are **not implemented yet**.
+The current `main` branch contains the Android project configuration, navigation shell, feature boundaries, product/architecture notes, a smoke-test scaffold, and a manual-only Android build workflow. File operations, the editor engine, archive processing, project persistence, and Shizuku actions are **not implemented yet**.
 
 ## Technology baseline
 
@@ -52,8 +52,8 @@ The wrapper consists of the checked-in launcher scripts, `gradle/wrapper/gradle-
 
 Android Auto Backup is disabled in the starter manifest so future project files are not silently swept into OS-managed backups. A dedicated, user-controlled backup/export flow is planned separately.
 
-The manual-only workflow at `.github/workflows/android-build.yml` uses the wrapper to compile, test, and upload a debug APK. No build has been run yet.
+The manual-only workflow on the default `main` branch at `.github/workflows/android-build.yml` uses the wrapper to compile, test, and upload a debug APK. It is now discoverable through GitHub Actions. No build has been run yet.
 
 ## Documentation
 
-See [architecture and product scope](docs/architecture.md). The `foundation` branch does not replace `main`; treat the app as a scaffold until compilation, tests, and a real-device smoke test pass.
+See [architecture and product scope](docs/architecture.md). Treat the app as a scaffold until compilation, tests, and a real-device smoke test pass. The `foundation` branch remains available as the pre-promotion development snapshot.
