@@ -7,15 +7,19 @@ JarVision is a native Android file manager and universal code workspace. It aims
 - **Universal by default:** not tied to Minecraft, one language, or one application.
 - **Single-pane first:** normal browsing uses one location; **Dual Space** is optional.
 - **Projects are first-class:** work in an app-managed workspace and export explicitly when ready.
-- **Honest permissions:** normal file access works independently of Shizuku; restricted operations are capability-checked.
+- **Honest permissions:** normal browsing works without special access; restricted operations are capability-checked.
 - **Protect user data:** clear conflict handling, safe writes, recoverable deletion where possible, and explicit warnings for irreversible actions.
 - **No fake functionality:** unfinished capabilities are labeled until implemented and tested.
 
 ## Current status
 
-**Implemented:** a single-pane Storage Access Framework browser. Users choose a folder through Android's system picker; JarVision persists the read grant, lists the granted folder's real contents, sorts folders before files, navigates into subfolders and back, refreshes, and attempts to open files with a compatible installed app. Access is limited to the folder the user grants.
+**Implemented:** a single-pane file browser that requests Android's special **Allow access to manage all files** access on Android 11+ and, once granted, lists actual shared internal-storage entries. It navigates folders, shows file sizes and modification dates, refreshes, and hands files to other apps with temporary read-only URI grants. The folder picker remains as a fallback if broad access is declined or unavailable.
 
 **Still planned:** safe copy/move/delete/rename, favorites, search and selection, archive operations, persistent project workspaces, the universal editor, Dual Space, and optional Shizuku integration.
+
+## Storage permissions and platform limits
+
+On Android 11+ (API 30+), broad shared-storage access uses `MANAGE_EXTERNAL_STORAGE` and the system's special app-access settings page; it is not a normal runtime permission dialog. Users must explicitly enable it. JarVision does not gain access to other apps' private directories, including protected `Android/data` locations. On Android 10, JarVision uses the folder picker because scoped storage has no equivalent all-files switch for this target; older supported releases use legacy runtime storage permissions when available. Google Play restricts all-files access to qualifying core use cases, so distribution requirements must be checked before publishing there.
 
 ## Technology baseline
 
@@ -25,7 +29,7 @@ JarVision is a native Android file manager and universal code workspace. It aims
 - Android Gradle Plugin 8.13.2; Gradle 8.13
 - Kotlin Gradle plugin 2.3.21
 - Compose BOM 2026.05.00; Navigation Compose 2.9.8
-- Storage Access Framework adapter isolated behind `StorageGateway`
+- Storage Access Framework fallback and a permission-checked shared-storage adapter
 
 Versions are pinned to keep the toolchain compatible. Recheck the official Android Gradle Plugin / Gradle / Kotlin compatibility matrix before upgrades.
 
@@ -59,4 +63,4 @@ The GitHub Actions workflow at `.github/workflows/android-build.yml` runs on pus
 
 ## Documentation
 
-See [architecture and product scope](docs/architecture.md). Treat storage browsing as beta until it has been exercised against several Android document providers and on a physical device. The `foundation` branch remains available as the pre-promotion development snapshot.
+See [architecture and product scope](docs/architecture.md). Treat broad storage access and browser operations as beta until tested on physical devices and multiple document providers. The `foundation` branch remains available as the pre-promotion development snapshot.

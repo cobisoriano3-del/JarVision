@@ -6,25 +6,30 @@ JarVision is a universal Android file manager and local development workspace. I
 
 ## Current implementation
 
-The Files tab now uses the Android Storage Access Framework through a `StorageGateway` abstraction and `SafStorageGateway` adapter. It stores the user's selected tree URI and restores the persisted read grant across launches. Directory queries run off the main thread; the UI displays real directory entries, loads subfolders, returns to parent folders, refreshes, and hands files to compatible Android apps through a read-granted document URI.
+The Files tab supports two permission-scoped modes:
 
-The app intentionally does not request broad filesystem permissions. Access remains constrained by Android's URI grant, and a revoked/missing grant is surfaced as an error with a folder-reselection action.
+- **Shared storage:** on Android 11+ when `Environment.isExternalStorageManager()` confirms special access, a direct file-system adapter lists real shared internal-storage entries. On Android 8–9 it uses granted legacy read/write storage permissions.
+- **Selected folder:** the Storage Access Framework remembers a user-selected tree URI and operates only inside that granted tree. This is also the fallback on Android 10, where this target does not use the all-files switch.
+
+The UI checks permissions at startup and when returning from system Settings. Direct file opens use AndroidX `FileProvider` content URIs with temporary read grants instead of unsafe `file://` URIs.
+
+The app intentionally does not request broad filesystem access silently. Users must explicitly enable the Android special access setting; if they decline, folder-only access remains available. Android continues to prevent access to protected directories belonging to other apps.
 
 ## Initial boundary
 
-The scaffold remains one Gradle application module (`:app`) with package-level feature boundaries. Separate Gradle modules should be extracted only when stable contracts, independent tests, and dependency isolation justify the added build complexity. Implemented files now live in `data/storage/` and `feature/files/`; other early-stage feature placeholders remain grouped in `feature/screens/FeatureScreens.kt`.
+The scaffold remains one Gradle application module (`:app`) with package-level feature boundaries. Separate Gradle modules should be extracted only when stable contracts, independent tests, and dependency isolation justify the added build complexity. Implemented files live in `data/storage/` and `feature/files/`; other early-stage feature placeholders remain grouped in `feature/screens/FeatureScreens.kt`.
 
 ## Main layers
 
 - **UI:** Jetpack Compose screens, navigation, theme, and reusable components.
 - **Feature packages:** files, projects, editor, archives, Dual Space, settings, and advanced access.
-- **Domain contracts:** `StorageEntry` and `StorageGateway` are the initial storage contracts; project, operation, and capability models will follow with their implementations.
-- **Platform/data adapters:** Storage Access Framework is implemented. App-private projects, Room metadata, archive engine, editor engine, and Shizuku adapter are still pending.
+- **Domain contracts:** `StorageEntry` and `StorageGateway` are the initial storage contracts; operation, project, and capability models will follow with their implementations.
+- **Platform/data adapters:** Storage Access Framework and permission-checked shared-storage listing are implemented. App-private projects, Room metadata, archive engine, editor engine, and Shizuku adapter remain pending.
 
 ## Dependency rules
 
-1. UI code interacts with file providers through the storage adapter and view-model state; it must not perform direct filesystem operations.
-2. File operations go through a storage abstraction that represents document IDs and Android document URIs, not assumed filesystem paths.
+1. UI code interacts with file providers through the storage adapters and view-model state; it must not perform directory queries directly.
+2. Storage entries represent document IDs or direct shared-storage paths without assuming every provider exposes a normal path.
 3. Projects own their app-private workspace and metadata; exporting is explicit.
 4. The editor accepts a document/session abstraction and must not assume every file has a normal path.
 5. Archive processing runs off the main thread and reports progress, conflicts, and failures.
@@ -41,6 +46,7 @@ The scaffold remains one Gradle application module (`:app`) with package-level f
 - Project files live in a private app-managed workspace by default. Database rows should store metadata, recents, favorites, preferences, and operation history—not entire source files.
 - Device storage access is limited to app-owned files and user-granted/system-permitted locations.
 - Backups and exports are explicit so users can protect work before uninstalling or clearing app data.
+- Shared-storage files handed to another app use temporary read-only FileProvider grants.
 
 ## Explicit non-guarantees
 
@@ -52,8 +58,8 @@ The scaffold remains one Gradle application module (`:app`) with package-level f
 
 ## Milestones
 
-1. **Build foundation and navigation — complete.**
-2. **Storage abstraction and real file browser — initial implementation.** Add provider coverage, a dedicated storage operation test suite, and physical-device testing before calling this mature.
+1. Build foundation and navigation — complete.
+2. Storage abstraction and real file browser — initial implementation, with all-files special access and folder-only fallback.
 3. Safe operations, search, selection, and contextual menus.
 4. Persistent universal projects and explicit import/export.
 5. Editor integration and recovery.

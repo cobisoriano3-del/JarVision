@@ -1,11 +1,8 @@
 package com.jarvision.app.data.storage
 
-import android.net.Uri
-import java.io.IOException
-
 /**
- * A storage item represented by a provider document ID rather than a filesystem path.
- * Android Storage Access Framework providers are not required to expose normal paths.
+ * An item exposed by a storage provider. SAF entries use document IDs; direct shared-storage
+ * entries also carry an absolute path for operations that are allowed by Android's permissions.
  */
 data class StorageEntry(
     val documentId: String,
@@ -13,13 +10,6 @@ data class StorageEntry(
     val mimeType: String?,
     val isDirectory: Boolean,
     val sizeBytes: Long?,
-    val lastModifiedMillis: Long?
+    val lastModifiedMillis: Long?,
+    val absolutePath: String? = null
 )
-
-interface StorageGateway {
-    @Throws(IOException::class)
-    fun getDocument(treeUri: Uri, documentId: String): StorageEntry?
-
-    @Throws(IOException::class)
-    fun listChildren(treeUri: Uri, parentDocumentId: String): List<StorageEntry>
-}
