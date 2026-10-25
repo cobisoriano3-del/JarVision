@@ -97,9 +97,18 @@ class ShizukuStorageUserService : IShizukuStorageService.Stub() {
         return file
     }
 
-    private fun isInsideSharedStorage(path: String): Boolean =
-        path == SHARED_STORAGE_ROOT ||
-            path.startsWith("$SHARED_STORAGE_ROOT/")
+    private val canonicalSharedStorageRoot: String by lazy {
+        try {
+            File(SHARED_STORAGE_ROOT).canonicalPath
+        } catch (_: IOException) {
+            SHARED_STORAGE_ROOT
+        }
+    }
+
+    private fun isInsideSharedStorage(path: String): Boolean {
+        val root = canonicalSharedStorageRoot
+        return path == root || path.startsWith("$root${File.separator}")
+    }
 
     private companion object {
         const val SHARED_STORAGE_ROOT = "/storage/emulated/0"

@@ -159,15 +159,15 @@ class ShizukuStorageAdapter private constructor(context: Context) {
     }
 
     fun connect() {
-        if (Shizuku.isPreV11()) {
-            mutableStatus.value = mutableStatus.value.copy(
-                message = "This Shizuku version is too old. Update Shizuku before connecting."
-            )
-            return
-        }
         if (!runCatching { Shizuku.pingBinder() }.getOrDefault(false)) {
             mutableStatus.value = ShizukuConnectionStatus(
                 message = "Shizuku is not running. Install Shizuku, start its service, then connect."
+            )
+            return
+        }
+        if (Shizuku.isPreV11()) {
+            mutableStatus.value = mutableStatus.value.copy(
+                message = "This Shizuku version is too old. Update Shizuku before connecting."
             )
             return
         }
