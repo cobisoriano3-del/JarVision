@@ -1917,7 +1917,6 @@ private fun fallbackFolderImage(folderName: String): ImageVector {
 }
 
 @OptIn(ExperimentalFoundationApi::class)
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FileEntryRow(
     entry: StorageEntry,
