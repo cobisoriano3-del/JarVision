@@ -13,6 +13,7 @@ import android.webkit.MimeTypeMap
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import java.io.IOException
@@ -1433,12 +1434,21 @@ private fun FileBrowserToolbar(
                 TextField(
                     value = searchQuery,
                     onValueChange = onSearchQueryChange,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp, max = 56.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(end = 6.dp)
+                        .heightIn(min = 48.dp, max = 56.dp),
+                    shape = RoundedCornerShape(16.dp),
                     singleLine = true,
                     placeholder = { Text("Search this folder") },
                     colors = TextFieldDefaults.colors(
-                        focusedContainerColor = Color(0xFF153F70),
-                        unfocusedContainerColor = Color(0xFF153F70),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        cursorColor = Color(0xFF9DCEFF),
+                        focusedPlaceholderColor = Color(0xFFB6D7F4),
+                        unfocusedPlaceholderColor = Color(0xFF9FBFE0),
+                        focusedContainerColor = Color(0xFF174777),
+                        unfocusedContainerColor = Color(0xFF10365F),
                         focusedIndicatorColor = Color.Transparent,
                         unfocusedIndicatorColor = Color.Transparent
                     )
@@ -1474,7 +1484,12 @@ private fun FileBrowserToolbar(
             }
         }
 
-        IconButton(onClick = onToggleSearch) {
+        IconButton(
+            onClick = onToggleSearch,
+            modifier = Modifier
+                .clip(RoundedCornerShape(14.dp))
+                .background(Color(0xFF174777).copy(alpha = 0.38f))
+        ) {
             Icon(
                 imageVector = if (searchExpanded) Icons.Filled.Close else Icons.Filled.Search,
                 contentDescription = if (searchExpanded) "Close search" else "Search",
@@ -1483,12 +1498,22 @@ private fun FileBrowserToolbar(
         }
 
         Box {
-            IconButton(onClick = { viewMenuExpanded = true }) {
+            IconButton(
+                onClick = { viewMenuExpanded = true },
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xFF174777).copy(alpha = 0.38f))
+            ) {
                 Icon(Icons.Filled.ViewList, contentDescription = "View and sort options", tint = Color.White)
             }
             DropdownMenu(
                 expanded = viewMenuExpanded,
-                onDismissRequest = { viewMenuExpanded = false }
+                onDismissRequest = { viewMenuExpanded = false },
+                shape = RoundedCornerShape(18.dp),
+                containerColor = Color(0xFF10345D),
+                tonalElevation = 0.dp,
+                shadowElevation = 16.dp,
+                border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
             ) {
                 DropdownMenuItem(
                     text = { Text("Compact") },
@@ -1548,7 +1573,12 @@ private fun FileBrowserToolbar(
             }
             DropdownMenu(
                 expanded = sortMenuExpanded,
-                onDismissRequest = { sortMenuExpanded = false }
+                onDismissRequest = { sortMenuExpanded = false },
+                shape = RoundedCornerShape(18.dp),
+                containerColor = Color(0xFF10345D),
+                tonalElevation = 0.dp,
+                shadowElevation = 16.dp,
+                border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
             ) {
                 BrowserSortOrder.entries.forEach { option ->
                     DropdownMenuItem(
@@ -1566,12 +1596,22 @@ private fun FileBrowserToolbar(
         }
 
         Box {
-            IconButton(onClick = { overflowExpanded = true }) {
+            IconButton(
+                onClick = { overflowExpanded = true },
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(Color(0xFF174777).copy(alpha = 0.38f))
+            ) {
                 Icon(Icons.Filled.MoreVert, contentDescription = "More options", tint = Color.White)
             }
             DropdownMenu(
                 expanded = overflowExpanded,
-                onDismissRequest = { overflowExpanded = false }
+                onDismissRequest = { overflowExpanded = false },
+                shape = RoundedCornerShape(18.dp),
+                containerColor = Color(0xFF10345D),
+                tonalElevation = 0.dp,
+                shadowElevation = 16.dp,
+                border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
             ) {
                 DropdownMenuItem(
                     text = { Text(if (selectionMode) "Stop multi-select" else "Multi-select") },
@@ -1629,7 +1669,12 @@ private fun FileBrowserToolbar(
             }
             DropdownMenu(
                 expanded = createMenuExpanded,
-                onDismissRequest = { createMenuExpanded = false }
+                onDismissRequest = { createMenuExpanded = false },
+                shape = RoundedCornerShape(18.dp),
+                containerColor = Color(0xFF10345D),
+                tonalElevation = 0.dp,
+                shadowElevation = 16.dp,
+                border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
             ) {
                 DropdownMenuItem(
                     text = { Text("Folder") },
