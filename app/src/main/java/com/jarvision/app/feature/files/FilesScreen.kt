@@ -1620,7 +1620,7 @@ private fun FileBrowserToolbar(
                 )
                 DropdownMenuItem(
                     text = { Text("Exit") },
-                    leadingIcon = { Icon(Icons.Filled.ExitToApp, contentDescription = null) },
+                    leadingIcon = { Icon(Icons.Filled.Close, contentDescription = null) },
                     onClick = {
                         overflowExpanded = false
                         onExit()
