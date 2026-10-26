@@ -44,6 +44,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.grid.items as gridItems
@@ -837,8 +839,22 @@ fun FilesScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
-            .statusBarsPadding()
     ) {
+        // Paint the status-bar inset blue so the toolbar visually reaches the top edge.
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .windowInsetsTopHeight(WindowInsets.statusBars)
+                .background(Color(0xFF082D59))
+        )
+
+        // Keep tappable content below the status icons while the background fills behind them.
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .statusBarsPadding()
+        ) {
         when {
             state.accessMode == StorageAccessMode.NONE -> {
                 StorageAccessRequiredState(
@@ -1293,6 +1309,7 @@ fun FilesScreen(
                     }
                 }
             )
+        }
         }
     }
 }

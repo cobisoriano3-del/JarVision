@@ -1,6 +1,10 @@
 package com.jarvision.app.ui.navigation
 
 import android.app.Activity
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.calculateBottomPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -12,6 +16,7 @@ import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -20,7 +25,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -116,31 +125,50 @@ fun JarVisionApp() {
         },
         bottomBar = {
             if (currentRoute in primaryRoutes) {
-                NavigationBar {
-                    tabs.forEach { tab ->
-                        NavigationBarItem(
-                            selected = currentRoute == tab.route,
-                            onClick = {
-                                navController.navigate(tab.route) {
-                                    popUpTo(navController.graph.findStartDestination().id) {
-                                        saveState = true
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF0A1019))
+                        .navigationBarsPadding()
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    NavigationBar(
+                        modifier = Modifier.clip(RoundedCornerShape(22.dp)),
+                        containerColor = Color(0xFF101A27),
+                        tonalElevation = 8.dp,
+                        windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp)
+                    ) {
+                        tabs.forEach { tab ->
+                            NavigationBarItem(
+                                selected = currentRoute == tab.route,
+                                onClick = {
+                                    navController.navigate(tab.route) {
+                                        popUpTo(navController.graph.findStartDestination().id) {
+                                            saveState = true
+                                        }
+                                        launchSingleTop = true
+                                        restoreState = true
                                     }
-                                    launchSingleTop = true
-                                    restoreState = true
-                                }
-                            },
-                            icon = { Icon(tab.icon, contentDescription = null) },
-                            label = { Text(tab.label) }
-                        )
+                                },
+                                icon = { Icon(tab.icon, contentDescription = null) },
+                                label = { Text(tab.label) }
+                            )
+                        }
                     }
                 }
             }
         }
     ) { innerPadding ->
+        val contentModifier = if (currentRoute == Routes.FILES) {
+            // The Files screen draws its own status-bar background and applies safe insets to controls.
+            Modifier.padding(bottom = innerPadding.calculateBottomPadding())
+        } else {
+            Modifier.padding(innerPadding)
+        }
         NavHost(
             navController = navController,
             startDestination = Routes.FILES,
-            modifier = Modifier.padding(innerPadding)
+            modifier = contentModifier
         ) {
             composable(Routes.FILES) {
                 FilesScreen(
