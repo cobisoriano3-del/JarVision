@@ -70,6 +70,116 @@ class FileOperationCoordinator(
         else -> throw IOException("Changes are unavailable in read-only Shizuku mode.")
     }
 
+    fun createFolder(
+        mode: StorageAccessMode,
+        treeUriString: String?,
+        parentDocumentId: String,
+        parentAbsolutePath: String?,
+        name: String
+    ): String {
+        validateName(name)
+        when (mode) {
+            StorageAccessMode.SHARED_STORAGE -> {
+                val parent = checkedSharedDirectory(parentAbsolutePath ?: parentDocumentId)
+                val target = safeSharedChildTarget(parent, name)
+                if (target.exists()) throw IOException("An item with that name already exists.")
+                if (!target.mkdir()) throw IOException("Couldn't create the folder.")
+            }
+            StorageAccessMode.DOCUMENT_TREE -> {
+                val treeUri = parseTreeUri(treeUriString)
+                requireWriteGrant(treeUri)
+                if (saf.listChildren(treeUri, parentDocumentId).any {
+                    it.displayName.equals(name, ignoreCase = true)
+                }) throw IOException("An item with that name already exists.")
+                DocumentsContract.createDocument(
+                    resolver,
+                    documentUri(treeUri, parentDocumentId),
+                    DocumentsContract.Document.MIME_TYPE_DIR,
+                    name
+                ) ?: throw IOException("The storage provider couldn't create the folder.")
+            }
+            else -> throw IOException("Creating folders is unavailable in read-only mode.")
+        }
+        return "Created folder: " + name
+    }
+
+    fun createEmptyFile(
+        mode: StorageAccessMode,
+        treeUriString: String?,
+        parentDocumentId: String,
+        parentAbsolutePath: String?,
+        name: String
+    ): String {
+        validateName(name)
+        val mime = URLConnection.guessContentTypeFromName(name) ?: "text/plain"
+        when (mode) {
+            StorageAccessMode.SHARED_STORAGE -> {
+                val parent = checkedSharedDirectory(parentAbsolutePath ?: parentDocumentId)
+                val target = safeSharedChildTarget(parent, name)
+                if (!target.createNewFile()) throw IOException("An item with that name already exists.")
+            }
+            StorageAccessMode.DOCUMENT_TREE -> {
+                val treeUri = parseTreeUri(treeUriString)
+                requireWriteGrant(treeUri)
+                if (saf.listChildren(treeUri, parentDocumentId).any {
+                    it.displayName.equals(name, ignoreCase = true)
+                }) throw IOException("An item with that name already exists.")
+                DocumentsContract.createDocument(
+                    resolver, documentUri(treeUri, parentDocumentId), mime, name
+                ) ?: throw IOException("The storage provider couldn't create the file.")
+            }
+            else -> throw IOException("Creating files is unavailable in read-only mode.")
+        }
+        return "Created file: " + name
+    }
+
+    fun createEmptyZip(
+        mode: StorageAccessMode,
+        treeUriString: String?,
+        parentDocumentId: String,
+        parentAbsolutePath: String?,
+        requestedName: String
+    ): String {
+        var name = requestedName.trim()
+        if (!name.lowercase(Locale.ROOT).endsWith(".zip")) name += ".zip"
+        validateName(name)
+        when (mode) {
+            StorageAccessMode.SHARED_STORAGE -> {
+                val parent = checkedSharedDirectory(parentAbsolutePath ?: parentDocumentId)
+                val target = safeSharedChildTarget(parent, name)
+                if (target.exists()) throw IOException("An item with that name already exists.")
+                try {
+                    if (!target.createNewFile()) throw IOException("An item with that name already exists.")
+                    ZipOutputStream(target.outputStream().buffered()).use { }
+                } catch (error: Exception) {
+                    target.delete()
+                    throw error
+                }
+            }
+            StorageAccessMode.DOCUMENT_TREE -> {
+                val treeUri = parseTreeUri(treeUriString)
+                requireWriteGrant(treeUri)
+                if (saf.listChildren(treeUri, parentDocumentId).any {
+                    it.displayName.equals(name, ignoreCase = true)
+                }) throw IOException("An item with that name already exists.")
+                val target = DocumentsContract.createDocument(
+                    resolver, documentUri(treeUri, parentDocumentId), "application/zip", name
+                ) ?: throw IOException("The storage provider couldn't create the ZIP file.")
+                try {
+                    resolver.openOutputStream(target, "w").use { output ->
+                        if (output == null) throw IOException("The storage provider couldn't write the ZIP file.")
+                        ZipOutputStream(output.buffered()).use { }
+                    }
+                } catch (error: Exception) {
+                    runCatching { DocumentsContract.deleteDocument(resolver, target) }
+                    throw error
+                }
+            }
+            else -> throw IOException("Creating archives is unavailable in read-only mode.")
+        }
+        return "Created archive: " + name
+    }
+
     fun rename(
         mode: StorageAccessMode,
         treeUriString: String?,

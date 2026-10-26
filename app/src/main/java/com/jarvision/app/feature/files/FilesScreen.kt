@@ -42,10 +42,24 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.grid.items as gridItems
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ViewList
+import androidx.compose.material.icons.filled.Sort
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.CreateNewFolder
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.ArrowBack
@@ -63,6 +77,11 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TextField
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -84,6 +103,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -91,6 +111,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.Dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -127,14 +148,99 @@ private data class PasteConflict(
     val sameSource: Boolean
 )
 
+private enum class BrowserViewMode { COMPACT, DETAILED, GRID }
+private enum class BrowserSortOrder { NAME, SIZE, DATE, TYPE }
+private enum class CreateItemKind { FOLDER, FILE, ZIP }
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun FilesScreen(
-    filesViewModel: FilesViewModel = viewModel()
+    filesViewModel: FilesViewModel = viewModel(),
+    onOpenSettings: () -> Unit = {},
+    onExit: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val state by filesViewModel.uiState.collectAsState()
+    val uiPreferences = remember(context) {
+        context.getSharedPreferences("jarvision_file_ui", android.content.Context.MODE_PRIVATE)
+    }
+    var viewMode by remember(uiPreferences) {
+        mutableStateOf(
+            runCatching {
+                BrowserViewMode.valueOf(uiPreferences.getString("view_mode", "COMPACT") ?: "COMPACT")
+            }.getOrDefault(BrowserViewMode.COMPACT)
+        )
+    }
+    var sortOrder by remember(uiPreferences) {
+        mutableStateOf(
+            runCatching {
+                BrowserSortOrder.valueOf(uiPreferences.getString("sort_order", "NAME") ?: "NAME")
+            }.getOrDefault(BrowserSortOrder.NAME)
+        )
+    }
+    var sortDescending by remember(uiPreferences) {
+        mutableStateOf(uiPreferences.getBoolean("sort_descending", false))
+    }
+    var showHiddenFiles by remember(uiPreferences) {
+        mutableStateOf(uiPreferences.getBoolean("show_hidden_files", false))
+    }
+    var searchExpanded by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var multiSelectMode by remember { mutableStateOf(false) }
+    var selectedEntryIds by remember { mutableStateOf(setOf<String>()) }
+    var bulkDeleteConfirmation by remember { mutableStateOf(false) }
+    var createKind by remember { mutableStateOf<CreateItemKind?>(null) }
+    var createName by remember { mutableStateOf("") }
+    var aboutDialogVisible by remember { mutableStateOf(false) }
+    var fabExpanded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(viewMode, sortOrder, sortDescending, showHiddenFiles) {
+        uiPreferences.edit()
+            .putString("view_mode", viewMode.name)
+            .putString("sort_order", sortOrder.name)
+            .putBoolean("sort_descending", sortDescending)
+            .putBoolean("show_hidden_files", showHiddenFiles)
+            .apply()
+    }
+
+    val canMutateFiles = when (state.accessMode) {
+        StorageAccessMode.SHARED_STORAGE -> true
+        StorageAccessMode.DOCUMENT_TREE -> state.treeUriString?.let { value ->
+            context.contentResolver.persistedUriPermissions.any {
+                it.uri == Uri.parse(value) && it.isWritePermission
+            }
+        } == true
+        else -> false
+    }
+
+    val visibleEntries = remember(
+        state.entries, searchQuery, showHiddenFiles, sortOrder, sortDescending
+    ) {
+        val comparator: Comparator<StorageEntry> = when (sortOrder) {
+            BrowserSortOrder.NAME -> Comparator { left, right ->
+                left.displayName.compareTo(right.displayName, ignoreCase = true)
+            }
+            BrowserSortOrder.SIZE -> Comparator { left, right ->
+                (left.sizeBytes ?: -1L).compareTo(right.sizeBytes ?: -1L)
+            }
+            BrowserSortOrder.DATE -> Comparator { left, right ->
+                (left.lastModifiedMillis ?: -1L).compareTo(right.lastModifiedMillis ?: -1L)
+            }
+            BrowserSortOrder.TYPE -> Comparator { left, right ->
+                val leftType = left.displayName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                val rightType = right.displayName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                val byType = leftType.compareTo(rightType)
+                if (byType != 0) byType else left.displayName.compareTo(right.displayName, ignoreCase = true)
+            }
+        }
+        val orderedComparator = if (sortDescending) comparator.reversed() else comparator
+        state.entries.asSequence()
+            .filter { showHiddenFiles || !it.displayName.startsWith(".") }
+            .filter { searchQuery.isBlank() || it.displayName.contains(searchQuery.trim(), ignoreCase = true) }
+            .toList()
+            .sortedWith(compareBy<StorageEntry> { !it.isDirectory }.then(orderedComparator))
+    }
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
     val shizukuAdapter = remember(context) { ShizukuStorageAdapter.get(context) }
@@ -564,6 +670,91 @@ fun FilesScreen(
         }
     }
 
+    fun toggleSelectedEntry(entry: StorageEntry) {
+        selectedEntryIds = if (entry.documentId in selectedEntryIds) {
+            selectedEntryIds - entry.documentId
+        } else {
+            selectedEntryIds + entry.documentId
+        }
+    }
+
+    fun beginCreate(kind: CreateItemKind) {
+        if (!canMutateFiles) {
+            showMessage("Choose a writable storage location to create items.")
+            return
+        }
+        createName = when (kind) {
+            CreateItemKind.FOLDER -> "New folder"
+            CreateItemKind.FILE -> "New file.txt"
+            CreateItemKind.ZIP -> "New archive.zip"
+        }
+        createKind = kind
+        fabExpanded = false
+    }
+
+    fun createCurrentItem(kind: CreateItemKind, requestedName: String) {
+        val parent = state.currentPath.lastOrNull() ?: return
+        if (!canMutateFiles) {
+            showMessage("Creating items is unavailable in this storage mode.")
+            createKind = null
+            return
+        }
+        coroutineScope.launch {
+            try {
+                val message = withContext(Dispatchers.IO) {
+                    when (kind) {
+                        CreateItemKind.FOLDER -> fileOperations.createFolder(
+                            state.accessMode, state.treeUriString,
+                            parent.documentId, parent.absolutePath, requestedName
+                        )
+                        CreateItemKind.FILE -> fileOperations.createEmptyFile(
+                            state.accessMode, state.treeUriString,
+                            parent.documentId, parent.absolutePath, requestedName
+                        )
+                        CreateItemKind.ZIP -> fileOperations.createEmptyZip(
+                            state.accessMode, state.treeUriString,
+                            parent.documentId, parent.absolutePath, requestedName
+                        )
+                    }
+                }
+                createKind = null
+                filesViewModel.refresh()
+                showMessage(message)
+            } catch (error: Exception) {
+                showMessage(error.message ?: "Couldn't create this item.")
+            }
+        }
+    }
+
+    fun deleteSelectedBatch() {
+        val selected = state.entries.filter { it.documentId in selectedEntryIds }
+        if (selected.isEmpty()) {
+            bulkDeleteConfirmation = false
+            return
+        }
+        bulkDeleteConfirmation = false
+        coroutineScope.launch {
+            val results = withContext(Dispatchers.IO) {
+                selected.map { entry ->
+                    entry to runCatching {
+                        fileOperations.delete(state.accessMode, state.treeUriString, entry)
+                    }
+                }
+            }
+            val failures = results.filter { it.second.isFailure }
+            selectedEntryIds = failures.map { it.first.documentId }.toSet()
+            if (failures.isEmpty()) multiSelectMode = false
+            filesViewModel.refresh()
+            val failedCount = failures.size
+            val successCount = selected.size - failedCount
+            val detail = failures.firstOrNull()?.second?.exceptionOrNull()?.message
+            showMessage(
+                if (failedCount == 0) "$successCount items deleted."
+                else "$successCount deleted; $failedCount failed. " + (detail ?: "")
+            )
+        }
+    }
+
     fun testArchive(entry: StorageEntry) {
         selectedEntry = null
         coroutineScope.launch {
@@ -627,11 +818,26 @@ fun FilesScreen(
         }
     }
 
-    BackHandler(enabled = state.currentPath.size > 1) {
-        filesViewModel.navigateBack()
+    BackHandler(enabled = multiSelectMode || searchExpanded || state.currentPath.size > 1) {
+        when {
+            multiSelectMode -> {
+                multiSelectMode = false
+                selectedEntryIds = emptySet()
+            }
+            searchExpanded -> {
+                searchExpanded = false
+                searchQuery = ""
+            }
+            else -> filesViewModel.navigateBack()
+        }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding()
+    ) {
         when {
             state.accessMode == StorageAccessMode.NONE -> {
                 StorageAccessRequiredState(
@@ -656,26 +862,137 @@ fun FilesScreen(
             }
 
             else -> {
-                BrowserState(
-                    state = state,
-                    onNavigateBack = filesViewModel::navigateBack,
-                    onChooseFolder = ::chooseFolder,
-                    shizukuConnected = shizukuStatus.isConnected,
-                    onOpenShizuku = ::openShizukuBrowser,
-                    onOpenEntry = { entry ->
-                        if (entry.isDirectory) filesViewModel.navigateInto(entry)
-                        else openFile(entry)
-                    },
-                    onLongPressEntry = { entry -> selectedEntry = entry },
-                    clipboardPresent = clipboard != null,
-                    canPaste = clipboard?.let {
-                        it.accessMode == state.accessMode &&
-                            it.treeUriString == state.treeUriString &&
-                            state.accessMode != StorageAccessMode.SHIZUKU_STORAGE
-                    } == true,
-                    onPaste = ::requestPaste,
-                    onRetry = filesViewModel::refresh
-                )
+                Column(Modifier.fillMaxSize()) {
+                    val currentLocation = state.currentPath.last()
+                    val pathText = currentLocation.absolutePath
+                        ?: state.currentPath.joinToString("/") { it.displayName }
+                    FileBrowserToolbar(
+                        title = if (multiSelectMode) "${selectedEntryIds.size} selected" else currentLocation.displayName,
+                        path = if (multiSelectMode) "Tap items to select or deselect" else pathText,
+                        searchExpanded = searchExpanded,
+                        searchQuery = searchQuery,
+                        onSearchQueryChange = { searchQuery = it },
+                        onToggleSearch = {
+                            searchExpanded = !searchExpanded
+                            if (!searchExpanded) searchQuery = ""
+                        },
+                        viewMode = viewMode,
+                        onViewModeChange = { viewMode = it },
+                        showHiddenFiles = showHiddenFiles,
+                        onToggleHiddenFiles = { showHiddenFiles = !showHiddenFiles },
+                        sortOrder = sortOrder,
+                        onSortOrderChange = { sortOrder = it },
+                        sortDescending = sortDescending,
+                        onToggleSortDirection = { sortDescending = !sortDescending },
+                        selectionMode = multiSelectMode,
+                        selectedCount = selectedEntryIds.size,
+                        canMutateFiles = canMutateFiles,
+                        clipboardPresent = clipboard != null,
+                        canPaste = clipboard?.let {
+                            it.accessMode == state.accessMode &&
+                                it.treeUriString == state.treeUriString &&
+                                state.accessMode != StorageAccessMode.SHIZUKU_STORAGE
+                        } == true,
+                        needsSafWriteGrant = state.accessMode == StorageAccessMode.DOCUMENT_TREE &&
+                            state.treeUriString?.let { value ->
+                                context.contentResolver.persistedUriPermissions.any {
+                                    it.uri == Uri.parse(value) && it.isWritePermission
+                                }
+                            } != true,
+                        shizukuConnected = shizukuStatus.isConnected,
+                        canNavigateBack = state.currentPath.size > 1,
+                        onBack = {
+                            if (multiSelectMode) {
+                                multiSelectMode = false
+                                selectedEntryIds = emptySet()
+                            } else if (state.currentPath.size > 1) {
+                                filesViewModel.navigateBack()
+                            }
+                        },
+                        onToggleMultiSelect = {
+                            multiSelectMode = !multiSelectMode
+                            if (!multiSelectMode) selectedEntryIds = emptySet()
+                            fabExpanded = false
+                        },
+                        onDeleteSelected = { bulkDeleteConfirmation = true },
+                        onPaste = ::requestPaste,
+                        onGrantWriteAccess = ::chooseFolder,
+                        onOpenShizuku = ::openShizukuBrowser,
+                        onOpenSettings = onOpenSettings,
+                        onAbout = { aboutDialogVisible = true },
+                        onExit = onExit,
+                        onCreateFolder = { beginCreate(CreateItemKind.FOLDER) },
+                        onCreateFile = { beginCreate(CreateItemKind.FILE) },
+                        onCreateArchive = { beginCreate(CreateItemKind.ZIP) }
+                    )
+                    BrowserState(
+                        modifier = Modifier.weight(1f),
+                        state = state,
+                        onChooseFolder = ::chooseFolder,
+                        entries = visibleEntries,
+                        viewMode = viewMode,
+                        selectedEntryIds = selectedEntryIds,
+                        selectionMode = multiSelectMode,
+                        onNavigateBack = filesViewModel::navigateBack,
+                        onOpenEntry = { entry ->
+                            if (multiSelectMode) toggleSelectedEntry(entry)
+                            else if (entry.isDirectory) filesViewModel.navigateInto(entry)
+                            else openFile(entry)
+                        },
+                        onLongPressEntry = { entry ->
+                            if (multiSelectMode) toggleSelectedEntry(entry)
+                            else selectedEntry = entry
+                        },
+                        onRetry = filesViewModel::refresh,
+                        searchActive = searchQuery.isNotBlank() || (!showHiddenFiles && state.entries.any { it.displayName.startsWith(".") })
+                    )
+                }
+            }
+        }
+
+        if (canMutateFiles && state.currentPath.isNotEmpty()) {
+            Column(
+                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 14.dp, bottom = 14.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (fabExpanded) {
+                    FloatingActionButton(
+                        onClick = { beginCreate(CreateItemKind.FOLDER) },
+                        modifier = Modifier.size(48.dp),
+                        containerColor = Color(0xFF2492F4),
+                        contentColor = Color.White
+                    ) {
+                        Icon(Icons.Filled.CreateNewFolder, contentDescription = "Create folder")
+                    }
+                    FloatingActionButton(
+                        onClick = { beginCreate(CreateItemKind.ZIP) },
+                        modifier = Modifier.size(48.dp),
+                        containerColor = Color(0xFF2492F4),
+                        contentColor = Color.White
+                    ) {
+                        Icon(Icons.Filled.Archive, contentDescription = "Create ZIP archive")
+                    }
+                    FloatingActionButton(
+                        onClick = { beginCreate(CreateItemKind.FILE) },
+                        modifier = Modifier.size(48.dp),
+                        containerColor = Color(0xFF2492F4),
+                        contentColor = Color.White
+                    ) {
+                        Icon(Icons.Filled.Description, contentDescription = "Create file")
+                    }
+                }
+                FloatingActionButton(
+                    onClick = { fabExpanded = !fabExpanded },
+                    modifier = Modifier.size(56.dp),
+                    containerColor = Color(0xFF2492F4),
+                    contentColor = Color.White
+                ) {
+                    Icon(
+                        imageVector = if (fabExpanded) Icons.Filled.Close else Icons.Filled.Add,
+                        contentDescription = if (fabExpanded) "Close create actions" else "Create"
+                    )
+                }
             }
         }
 
@@ -867,6 +1184,90 @@ fun FilesScreen(
             )
         }
 
+        aboutDialogVisible.let { show ->
+            if (show) {
+                AlertDialog(
+                    onDismissRequest = { aboutDialogVisible = false },
+                    title = { Text("JarVision") },
+                    text = {
+                        Text(
+                            "JarVision 0.7.0\nA compact Android file manager with local file operations and ZIP tools. Shizuku browsing remains read-only."
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { aboutDialogVisible = false }) { Text("Close") }
+                    }
+                )
+            }
+        }
+
+        createKind?.let { kind ->
+            AlertDialog(
+                onDismissRequest = { createKind = null },
+                title = {
+                    Text(
+                        when (kind) {
+                            CreateItemKind.FOLDER -> "Create folder"
+                            CreateItemKind.FILE -> "Create file"
+                            CreateItemKind.ZIP -> "Create ZIP archive"
+                        }
+                    )
+                },
+                text = {
+                    Column {
+                        Text(
+                            when (kind) {
+                                CreateItemKind.FOLDER -> "Create a new folder in the current location."
+                                CreateItemKind.FILE -> "Create an empty file in the current location."
+                                CreateItemKind.ZIP -> "Create an empty ZIP archive in the current location."
+                            },
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        TextField(
+                            value = createName,
+                            onValueChange = { createName = it },
+                            singleLine = true,
+                            label = {
+                                Text(
+                                    when (kind) {
+                                        CreateItemKind.FOLDER -> "Folder name"
+                                        CreateItemKind.FILE -> "File name"
+                                        CreateItemKind.ZIP -> "Archive name"
+                                    }
+                                )
+                            }
+                        )
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = { createCurrentItem(kind, createName) },
+                        enabled = createName.isNotBlank()
+                    ) { Text("Create") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { createKind = null }) { Text("Cancel") }
+                }
+            )
+        }
+
+        if (bulkDeleteConfirmation) {
+            AlertDialog(
+                onDismissRequest = { bulkDeleteConfirmation = false },
+                title = { Text("Delete ${selectedEntryIds.size} items?") },
+                text = {
+                    Text("This permanently deletes the selected files and folders. This action cannot be undone.")
+                },
+                confirmButton = {
+                    TextButton(onClick = ::deleteSelectedBatch) { Text("Delete selected") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { bulkDeleteConfirmation = false }) { Text("Cancel") }
+                }
+            )
+        }
+
         previewContent?.let { (fileName, textContent) ->
             AlertDialog(
                 onDismissRequest = { previewContent = null },
@@ -970,64 +1371,328 @@ private fun StorageAccessRequiredState(
 }
 
 @Composable
-private fun BrowserState(
-    state: FilesUiState,
-    onNavigateBack: () -> Unit,
-    onChooseFolder: () -> Unit,
-    shizukuConnected: Boolean,
-    onOpenShizuku: () -> Unit,
-    onOpenEntry: (StorageEntry) -> Unit,
-    onLongPressEntry: (StorageEntry) -> Unit,
+private fun FileBrowserToolbar(
+    title: String,
+    path: String,
+    searchExpanded: Boolean,
+    searchQuery: String,
+    onSearchQueryChange: (String) -> Unit,
+    onToggleSearch: () -> Unit,
+    viewMode: BrowserViewMode,
+    onViewModeChange: (BrowserViewMode) -> Unit,
+    showHiddenFiles: Boolean,
+    onToggleHiddenFiles: () -> Unit,
+    sortOrder: BrowserSortOrder,
+    onSortOrderChange: (BrowserSortOrder) -> Unit,
+    sortDescending: Boolean,
+    onToggleSortDirection: () -> Unit,
+    selectionMode: Boolean,
+    selectedCount: Int,
+    canMutateFiles: Boolean,
     clipboardPresent: Boolean,
     canPaste: Boolean,
+    needsSafWriteGrant: Boolean,
+    shizukuConnected: Boolean,
+    canNavigateBack: Boolean,
+    onBack: () -> Unit,
+    onToggleMultiSelect: () -> Unit,
+    onDeleteSelected: () -> Unit,
     onPaste: () -> Unit,
-    onRetry: () -> Unit
+    onGrantWriteAccess: () -> Unit,
+    onOpenShizuku: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onAbout: () -> Unit,
+    onExit: () -> Unit,
+    onCreateFolder: () -> Unit,
+    onCreateFile: () -> Unit,
+    onCreateArchive: () -> Unit
 ) {
-    val context = LocalContext.current
-    val hasSafWriteGrant = state.treeUriString?.let { value ->
-        context.contentResolver.persistedUriPermissions.any {
-            it.uri == Uri.parse(value) && it.isWritePermission
-        }
-    } == true
-    Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 8.dp)
+    var viewMenuExpanded by remember { mutableStateOf(false) }
+    var sortMenuExpanded by remember { mutableStateOf(false) }
+    var overflowExpanded by remember { mutableStateOf(false) }
+    var createMenuExpanded by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 58.dp)
+            .background(Color(0xFF082D59))
+            .padding(horizontal = 4.dp, vertical = 3.dp),
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.End,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (clipboardPresent) {
-                TextButton(onClick = onPaste, enabled = canPaste) {
-                    Text(if (canPaste) "Paste" else "Paste unavailable")
-                }
-            }
-            if (state.accessMode == StorageAccessMode.DOCUMENT_TREE && !hasSafWriteGrant) {
-                TextButton(onClick = onChooseFolder) { Text("Grant write access") }
-            }
-            TextButton(onClick = onOpenShizuku) {
-                Text(if (shizukuConnected) "Browse protected folders" else "Connect Shizuku")
-            }
-        }
-        if (state.accessMode == StorageAccessMode.SHIZUKU_STORAGE) {
-            Text(
-                text = "Read-only Shizuku browsing · No file changes are made",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+        IconButton(onClick = onBack, enabled = selectionMode || canNavigateBack) {
+            Icon(
+                imageVector = if (selectionMode) Icons.Filled.Close else Icons.Filled.ArrowBack,
+                contentDescription = if (selectionMode) "Exit selection mode" else "Navigate back",
+                tint = Color.White
             )
         }
-        Spacer(Modifier.height(8.dp))
+
+        Column(modifier = Modifier.weight(1f)) {
+            if (searchExpanded) {
+                TextField(
+                    value = searchQuery,
+                    onValueChange = onSearchQueryChange,
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp, max = 56.dp),
+                    singleLine = true,
+                    placeholder = { Text("Search this folder") },
+                    colors = TextFieldDefaults.colors(
+                        focusedContainerColor = Color(0xFF153F70),
+                        unfocusedContainerColor = Color(0xFF153F70),
+                        focusedIndicatorColor = Color.Transparent,
+                        unfocusedIndicatorColor = Color.Transparent
+                    )
+                )
+            } else {
+                Text(
+                    text = title,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = path,
+                    color = Color.White.copy(alpha = 0.76f),
+                    style = MaterialTheme.typography.bodySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+
+        if (clipboardPresent) {
+            TextButton(onClick = onPaste, enabled = canPaste) {
+                Text("Paste", color = Color.White)
+            }
+        }
+
+        if (selectionMode && selectedCount > 0 && canMutateFiles) {
+            IconButton(onClick = onDeleteSelected) {
+                Icon(Icons.Filled.Delete, contentDescription = "Delete selected items", tint = Color.White)
+            }
+        }
+
+        IconButton(onClick = onToggleSearch) {
+            Icon(
+                imageVector = if (searchExpanded) Icons.Filled.Close else Icons.Filled.Search,
+                contentDescription = if (searchExpanded) "Close search" else "Search",
+                tint = Color.White
+            )
+        }
+
+        Box {
+            IconButton(onClick = { viewMenuExpanded = true }) {
+                Icon(Icons.Filled.ViewList, contentDescription = "View and sort options", tint = Color.White)
+            }
+            DropdownMenu(
+                expanded = viewMenuExpanded,
+                onDismissRequest = { viewMenuExpanded = false }
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Compact") },
+                    leadingIcon = { Icon(Icons.Filled.ViewList, contentDescription = null) },
+                    trailingIcon = {
+                        if (viewMode == BrowserViewMode.COMPACT) Icon(Icons.Filled.Check, contentDescription = null)
+                    },
+                    onClick = {
+                        onViewModeChange(BrowserViewMode.COMPACT)
+                        viewMenuExpanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Detailed") },
+                    leadingIcon = { Icon(Icons.Filled.ViewList, contentDescription = null) },
+                    trailingIcon = {
+                        if (viewMode == BrowserViewMode.DETAILED) Icon(Icons.Filled.Check, contentDescription = null)
+                    },
+                    onClick = {
+                        onViewModeChange(BrowserViewMode.DETAILED)
+                        viewMenuExpanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Grid") },
+                    leadingIcon = { Icon(Icons.Filled.GridView, contentDescription = null) },
+                    trailingIcon = {
+                        if (viewMode == BrowserViewMode.GRID) Icon(Icons.Filled.Check, contentDescription = null)
+                    },
+                    onClick = {
+                        onViewModeChange(BrowserViewMode.GRID)
+                        viewMenuExpanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text(if (showHiddenFiles) "Hide hidden files" else "Show hidden files") },
+                    onClick = {
+                        onToggleHiddenFiles()
+                        viewMenuExpanded = false
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Sort by…") },
+                    leadingIcon = { Icon(Icons.Filled.Sort, contentDescription = null) },
+                    onClick = {
+                        viewMenuExpanded = false
+                        sortMenuExpanded = true
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text(if (sortDescending) "Order: Descending" else "Order: Ascending") },
+                    onClick = {
+                        onToggleSortDirection()
+                        viewMenuExpanded = false
+                    }
+                )
+            }
+            DropdownMenu(
+                expanded = sortMenuExpanded,
+                onDismissRequest = { sortMenuExpanded = false }
+            ) {
+                BrowserSortOrder.entries.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.name.lowercase(Locale.ROOT).replaceFirstChar { it.uppercase() }) },
+                        trailingIcon = {
+                            if (sortOrder == option) Icon(Icons.Filled.Check, contentDescription = null)
+                        },
+                        onClick = {
+                            onSortOrderChange(option)
+                            sortMenuExpanded = false
+                        }
+                    )
+                }
+            }
+        }
+
+        Box {
+            IconButton(onClick = { overflowExpanded = true }) {
+                Icon(Icons.Filled.MoreVert, contentDescription = "More options", tint = Color.White)
+            }
+            DropdownMenu(
+                expanded = overflowExpanded,
+                onDismissRequest = { overflowExpanded = false }
+            ) {
+                DropdownMenuItem(
+                    text = { Text(if (selectionMode) "Stop multi-select" else "Multi-select") },
+                    onClick = {
+                        overflowExpanded = false
+                        onToggleMultiSelect()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Create  ›") },
+                    enabled = canMutateFiles,
+                    onClick = {
+                        overflowExpanded = false
+                        createMenuExpanded = true
+                    }
+                )
+                if (needsSafWriteGrant) {
+                    DropdownMenuItem(
+                        text = { Text("Grant write access") },
+                        onClick = {
+                            overflowExpanded = false
+                            onGrantWriteAccess()
+                        }
+                    )
+                }
+                DropdownMenuItem(
+                    text = { Text(if (shizukuConnected) "Browse protected folders" else "Connect Shizuku") },
+                    onClick = {
+                        overflowExpanded = false
+                        onOpenShizuku()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Settings") },
+                    onClick = {
+                        overflowExpanded = false
+                        onOpenSettings()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("About") },
+                    onClick = {
+                        overflowExpanded = false
+                        onAbout()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("Exit") },
+                    leadingIcon = { Icon(Icons.Filled.ExitToApp, contentDescription = null) },
+                    onClick = {
+                        overflowExpanded = false
+                        onExit()
+                    }
+                )
+            }
+            DropdownMenu(
+                expanded = createMenuExpanded,
+                onDismissRequest = { createMenuExpanded = false }
+            ) {
+                DropdownMenuItem(
+                    text = { Text("Folder") },
+                    leadingIcon = { Icon(Icons.Filled.CreateNewFolder, contentDescription = null) },
+                    onClick = {
+                        createMenuExpanded = false
+                        onCreateFolder()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("File") },
+                    leadingIcon = { Icon(Icons.Filled.Description, contentDescription = null) },
+                    onClick = {
+                        createMenuExpanded = false
+                        onCreateFile()
+                    }
+                )
+                DropdownMenuItem(
+                    text = { Text("ZIP archive") },
+                    leadingIcon = { Icon(Icons.Filled.Archive, contentDescription = null) },
+                    onClick = {
+                        createMenuExpanded = false
+                        onCreateArchive()
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun BrowserState(
+    modifier: Modifier = Modifier,
+    state: FilesUiState,
+    onChooseFolder: () -> Unit,
+    entries: List<StorageEntry>,
+    viewMode: BrowserViewMode,
+    selectedEntryIds: Set<String>,
+    selectionMode: Boolean,
+    onNavigateBack: () -> Unit,
+    onOpenEntry: (StorageEntry) -> Unit,
+    onLongPressEntry: (StorageEntry) -> Unit,
+    onRetry: () -> Unit,
+    searchActive: Boolean
+) {
+    Column(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)
+    ) {
+        if (state.accessMode == StorageAccessMode.SHIZUKU_STORAGE) {
+            Text(
+                text = "READ-ONLY · Shizuku",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+            )
+        }
 
         when {
             state.isLoading -> {
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
+                    modifier = Modifier.fillMaxWidth().weight(1f),
                     contentAlignment = Alignment.Center
-                ) {
-                    CircularProgressIndicator()
-                }
+                ) { CircularProgressIndicator() }
             }
 
             state.errorMessage != null -> {
@@ -1039,12 +1704,21 @@ private fun BrowserState(
                 )
             }
 
-            state.entries.isEmpty() && state.currentPath.size <= 1 -> {
+            entries.isEmpty() && state.entries.isNotEmpty() -> {
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f)
-                        .padding(24.dp),
+                    modifier = Modifier.fillMaxWidth().weight(1f).padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        if (searchActive) "No matching items" else "No visible items",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            entries.isEmpty() && state.currentPath.size <= 1 -> {
+                Box(
+                    modifier = Modifier.fillMaxWidth().weight(1f).padding(24.dp),
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1067,30 +1741,65 @@ private fun BrowserState(
                 }
             }
 
-            else -> {
-                LazyColumn(
+            viewMode == BrowserViewMode.GRID -> {
+                LazyVerticalGrid(
+                    columns = GridCells.Fixed(3),
                     modifier = Modifier.weight(1f),
-                    contentPadding = PaddingValues(bottom = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                    contentPadding = PaddingValues(bottom = 76.dp, top = 2.dp),
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
                     if (state.currentPath.size > 1) {
                         item(key = "__jarvision_parent_folder__") {
-                            ParentFolderRow(onClick = onNavigateBack)
+                            ParentFolderGridTile(onClick = onNavigateBack)
                         }
                     }
-                    items(state.entries, key = { it.documentId }) { entry ->
-                        FileEntryRow(
+                    gridItems(entries, key = { it.documentId }) { entry ->
+                        GridFileEntry(
                             entry = entry,
                             state = state,
+                            selected = entry.documentId in selectedEntryIds,
+                            selectionMode = selectionMode,
                             onClick = { onOpenEntry(entry) },
                             onLongClick = { onLongPressEntry(entry) }
                         )
                     }
                 }
                 Text(
-                    text = "${state.entries.size} items",
-                    modifier = Modifier.padding(vertical = 8.dp),
-                    style = MaterialTheme.typography.labelMedium,
+                    text = "${entries.size} items",
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            else -> {
+                LazyColumn(
+                    modifier = Modifier.weight(1f),
+                    contentPadding = PaddingValues(bottom = 76.dp, top = 2.dp),
+                    verticalArrangement = Arrangement.spacedBy(if (viewMode == BrowserViewMode.COMPACT) 3.dp else 5.dp)
+                ) {
+                    if (state.currentPath.size > 1) {
+                        item(key = "__jarvision_parent_folder__") {
+                            ParentFolderRow(onClick = onNavigateBack)
+                        }
+                    }
+                    items(entries, key = { it.documentId }) { entry ->
+                        FileEntryRow(
+                            entry = entry,
+                            state = state,
+                            viewMode = viewMode,
+                            selected = entry.documentId in selectedEntryIds,
+                            selectionMode = selectionMode,
+                            onClick = { onOpenEntry(entry) },
+                            onLongClick = { onLongPressEntry(entry) }
+                        )
+                    }
+                }
+                Text(
+                    text = "${entries.size} items",
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -1099,22 +1808,54 @@ private fun BrowserState(
 }
 
 @Composable
-private fun ParentFolderRow(onClick: () -> Unit) {
+private fun ParentFolderGridTile(onClick: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.32f))
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
     ) {
-        Row(Modifier.padding(horizontal = 14.dp, vertical = 13.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.ArrowBack, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
-            Spacer(Modifier.size(14.dp))
-            Text("Parent folder", style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+        Column(
+            modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp).fillMaxWidth(),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Icon(Icons.Filled.ArrowBack, contentDescription = "Parent folder", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(38.dp))
+            Spacer(Modifier.height(4.dp))
+            Text("Parent", maxLines = 1, style = MaterialTheme.typography.labelSmall)
         }
     }
 }
 
 @Composable
-private fun FolderThumbnail(entry: StorageEntry, state: FilesUiState) {
+private fun ParentFolderRow(onClick: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(9.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)
+        )
+    ) {
+        Row(
+            Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Filled.ArrowBack,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(Modifier.size(10.dp))
+            Text(
+                "Parent folder",
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = FontWeight.Medium
+            )
+        }
+    }
+}
+
+@Composable
+private fun FolderThumbnail(entry: StorageEntry, state: FilesUiState, thumbnailSize: Dp = 48.dp) {
     val context = LocalContext.current
     val thumbnailModel by produceState<Any?>(
         initialValue = null,
@@ -1144,7 +1885,7 @@ private fun FolderThumbnail(entry: StorageEntry, state: FilesUiState) {
     var imageFailed by remember(entry.documentId, thumbnailModel) { mutableStateOf(false) }
     val shape = RoundedCornerShape(10.dp)
     Box(
-        modifier = Modifier.size(48.dp).clip(shape).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)),
+        modifier = Modifier.size(thumbnailSize).clip(shape).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)),
         contentAlignment = Alignment.Center
     ) {
         if (thumbnailModel != null && !imageFailed) {
@@ -1157,7 +1898,7 @@ private fun FolderThumbnail(entry: StorageEntry, state: FilesUiState) {
             )
         } else {
             Icon(imageVector = fallbackFolderImage(entry.displayName), contentDescription = "Folder",
-                tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
+                tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(if (thumbnailSize <= 36.dp) 20.dp else 28.dp))
         }
     }
 }
@@ -1176,10 +1917,101 @@ private fun fallbackFolderImage(folderName: String): ImageVector {
 }
 
 @OptIn(ExperimentalFoundationApi::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FileEntryRow(
     entry: StorageEntry,
     state: FilesUiState,
+    viewMode: BrowserViewMode,
+    selected: Boolean,
+    selectionMode: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    val compact = viewMode == BrowserViewMode.COMPACT
+    val thumbnailSize = if (compact) 32.dp else 38.dp
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick),
+        shape = RoundedCornerShape(if (compact) 9.dp else 12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (selected) {
+                MaterialTheme.colorScheme.primary.copy(alpha = 0.19f)
+            } else {
+                MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (compact) 0.28f else 0.42f)
+            }
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(
+                horizontal = if (compact) 9.dp else 12.dp,
+                vertical = if (compact) 5.dp else 8.dp
+            ),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (entry.isDirectory) {
+                FolderThumbnail(entry = entry, state = state, thumbnailSize = thumbnailSize)
+            } else {
+                Icon(
+                    imageVector = Icons.Filled.InsertDriveFile,
+                    contentDescription = "File",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(thumbnailSize)
+                )
+            }
+            Spacer(Modifier.size(if (compact) 10.dp else 12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = entry.displayName,
+                    style = if (compact) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = if (compact) 1 else 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                val details = entryDetails(entry)
+                if (details.isNotBlank()) {
+                    Spacer(Modifier.height(if (compact) 0.dp else 2.dp))
+                    Text(
+                        text = details,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            when {
+                selectionMode && selected -> Icon(
+                    imageVector = Icons.Filled.Check,
+                    contentDescription = "Selected",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 6.dp).size(22.dp)
+                )
+                selectionMode -> Icon(
+                    imageVector = Icons.Filled.Check,
+                    contentDescription = "Not selected",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                    modifier = Modifier.padding(start = 6.dp).size(22.dp)
+                )
+                entry.isDirectory -> Icon(
+                    imageVector = Icons.Filled.ChevronRight,
+                    contentDescription = "Open folder",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun GridFileEntry(
+    entry: StorageEntry,
+    state: FilesUiState,
+    selected: Boolean,
+    selectionMode: Boolean,
     onClick: () -> Unit,
     onLongClick: () -> Unit
 ) {
@@ -1187,47 +2019,41 @@ private fun FileEntryRow(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.48f)
+            containerColor = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.19f)
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.38f)
         )
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 13.dp),
-            verticalAlignment = Alignment.CenterVertically
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 8.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (entry.isDirectory) {
-                FolderThumbnail(entry = entry, state = state)
+                FolderThumbnail(entry = entry, state = state, thumbnailSize = 48.dp)
             } else {
-                Icon(imageVector = Icons.Filled.InsertDriveFile, contentDescription = "File",
-                    tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(28.dp))
-            }
-            Spacer(Modifier.size(14.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = entry.displayName,
-                    style = MaterialTheme.typography.bodyLarge,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-                val details = entryDetails(entry)
-                if (details.isNotBlank()) {
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        text = details,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-            if (entry.isDirectory) {
                 Icon(
-                    imageVector = Icons.Filled.ChevronRight,
-                    contentDescription = "Open folder",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    Icons.Filled.InsertDriveFile,
+                    contentDescription = "File",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(48.dp)
+                )
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = entry.displayName,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Medium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center
+            )
+            if (selectionMode && selected) {
+                Icon(
+                    Icons.Filled.Check,
+                    contentDescription = "Selected",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
                 )
             }
         }

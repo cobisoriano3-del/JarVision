@@ -1,5 +1,6 @@
 package com.jarvision.app.ui.navigation
 
+import android.app.Activity
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -17,6 +18,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -53,6 +55,7 @@ private data class MainTab(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun JarVisionApp() {
+    val context = LocalContext.current
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route ?: Routes.FILES
@@ -65,49 +68,51 @@ fun JarVisionApp() {
 
     Scaffold(
         topBar = {
-            CenterAlignedTopAppBar(
-                title = {},
-                navigationIcon = {
-                    if (currentRoute !in primaryRoutes) {
+            if (currentRoute != Routes.FILES) {
+                CenterAlignedTopAppBar(
+                    title = {},
+                    navigationIcon = {
+                        if (currentRoute !in primaryRoutes) {
+                            IconButton(onClick = {
+                                if (!navController.popBackStack()) {
+                                    navController.navigate(Routes.FILES)
+                                }
+                            }) {
+                                Icon(
+                                    imageVector = Icons.Filled.ArrowBack,
+                                    contentDescription = "Back"
+                                )
+                            }
+                        }
+                    },
+                    actions = {
                         IconButton(onClick = {
-                            if (!navController.popBackStack()) {
-                                navController.navigate(Routes.FILES)
+                            if (currentRoute != Routes.PROJECTS) {
+                                navController.navigate(Routes.PROJECTS) {
+                                    launchSingleTop = true
+                                }
                             }
                         }) {
                             Icon(
-                                imageVector = Icons.Filled.ArrowBack,
-                                contentDescription = "Back"
+                                imageVector = Icons.Filled.FolderOpen,
+                                contentDescription = "Projects menu"
+                            )
+                        }
+                        IconButton(onClick = {
+                            if (currentRoute != Routes.SETTINGS) {
+                                navController.navigate(Routes.SETTINGS) {
+                                    launchSingleTop = true
+                                }
+                            }
+                        }) {
+                            Icon(
+                                imageVector = Icons.Filled.Settings,
+                                contentDescription = "Settings"
                             )
                         }
                     }
-                },
-                actions = {
-                    IconButton(onClick = {
-                        if (currentRoute != Routes.PROJECTS) {
-                            navController.navigate(Routes.PROJECTS) {
-                                launchSingleTop = true
-                            }
-                        }
-                    }) {
-                        Icon(
-                            imageVector = Icons.Filled.FolderOpen,
-                            contentDescription = "Projects menu"
-                        )
-                    }
-                    IconButton(onClick = {
-                        if (currentRoute != Routes.SETTINGS) {
-                            navController.navigate(Routes.SETTINGS) {
-                                launchSingleTop = true
-                            }
-                        }
-                    }) {
-                        Icon(
-                            imageVector = Icons.Filled.Settings,
-                            contentDescription = "Settings"
-                        )
-                    }
-                }
-            )
+                )
+            }
         },
         bottomBar = {
             if (currentRoute in primaryRoutes) {
@@ -137,7 +142,14 @@ fun JarVisionApp() {
             startDestination = Routes.FILES,
             modifier = Modifier.padding(innerPadding)
         ) {
-            composable(Routes.FILES) { FilesScreen() }
+            composable(Routes.FILES) {
+                FilesScreen(
+                    onOpenSettings = {
+                        navController.navigate(Routes.SETTINGS) { launchSingleTop = true }
+                    },
+                    onExit = { (context as? Activity)?.finish() }
+                )
+            }
             composable(Routes.PROJECTS) { ProjectsScreen() }
             composable(Routes.TOOLS) {
                 ToolsScreen(
