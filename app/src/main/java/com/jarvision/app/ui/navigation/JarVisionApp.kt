@@ -12,10 +12,9 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.WindowInsets
@@ -87,6 +86,7 @@ fun JarVisionApp() {
     )
 
     Scaffold(
+        contentWindowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
         topBar = {
             if (currentRoute != Routes.FILES) {
                 val toolbarTitle = when (currentRoute) {
@@ -103,7 +103,7 @@ fun JarVisionApp() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color(0xFF0D3159))
-                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .windowInsetsPadding(WindowInsets.displayCutout)
                         .height(48.dp)
                         .padding(horizontal = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -184,7 +184,7 @@ fun JarVisionApp() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color(0xFF0A1019))
-                        .navigationBarsPadding()
+                        .windowInsetsPadding(WindowInsets.displayCutout)
                         .padding(horizontal = 12.dp, vertical = 4.dp)
                 ) {
                     Surface(
