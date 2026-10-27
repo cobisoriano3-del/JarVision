@@ -15,6 +15,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.WindowInsets
@@ -103,7 +105,7 @@ fun JarVisionApp() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color(0xFF0D3159))
-                        .windowInsetsPadding(WindowInsets.displayCutout)
+                        .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
                         .height(48.dp)
                         .padding(horizontal = 8.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
@@ -184,7 +186,7 @@ fun JarVisionApp() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color(0xFF0A1019))
-                        .windowInsetsPadding(WindowInsets.displayCutout)
+                        .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
                         .padding(horizontal = 12.dp, vertical = 4.dp)
                 ) {
                     Surface(
