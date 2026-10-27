@@ -2,34 +2,46 @@ package com.jarvision.app.ui.navigation
 
 import android.app.Activity
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Workspaces
-import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -61,7 +73,6 @@ private data class MainTab(
     val icon: ImageVector
 )
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun JarVisionApp() {
     val context = LocalContext.current
@@ -78,49 +89,93 @@ fun JarVisionApp() {
     Scaffold(
         topBar = {
             if (currentRoute != Routes.FILES) {
-                CenterAlignedTopAppBar(
-                    title = {},
-                    navigationIcon = {
+                val toolbarTitle = when (currentRoute) {
+                    Routes.PROJECTS -> "Projects"
+                    Routes.TOOLS -> "Tools"
+                    Routes.EDITOR -> "Universal Editor"
+                    Routes.ARCHIVES -> "Archive Tools"
+                    Routes.DUAL_SPACE -> "Dual Space"
+                    Routes.ADVANCED_ACCESS -> "Advanced Access"
+                    Routes.SETTINGS -> "Settings"
+                    else -> "JarVision"
+                }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF0D3159))
+                        .windowInsetsPadding(WindowInsets.statusBars)
+                        .height(48.dp)
+                        .padding(horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         if (currentRoute !in primaryRoutes) {
-                            IconButton(onClick = {
-                                if (!navController.popBackStack()) {
-                                    navController.navigate(Routes.FILES)
-                                }
-                            }) {
+                            IconButton(
+                                onClick = {
+                                    if (!navController.popBackStack()) {
+                                        navController.navigate(Routes.FILES)
+                                    }
+                                },
+                                modifier = Modifier.size(40.dp)
+                            ) {
                                 Icon(
                                     imageVector = Icons.Filled.ArrowBack,
-                                    contentDescription = "Back"
+                                    contentDescription = "Back",
+                                    tint = Color(0xFFE8EDF5),
+                                    modifier = Modifier.size(22.dp)
                                 )
                             }
+                            Spacer(Modifier.width(4.dp))
                         }
-                    },
-                    actions = {
-                        IconButton(onClick = {
-                            if (currentRoute != Routes.PROJECTS) {
-                                navController.navigate(Routes.PROJECTS) {
-                                    launchSingleTop = true
+                        Text(
+                            text = toolbarTitle,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFFE8EDF5),
+                            maxLines = 1
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = {
+                                if (currentRoute != Routes.PROJECTS) {
+                                    navController.navigate(Routes.PROJECTS) {
+                                        launchSingleTop = true
+                                    }
                                 }
-                            }
-                        }) {
+                            },
+                            modifier = Modifier.size(40.dp)
+                        ) {
                             Icon(
                                 imageVector = Icons.Filled.FolderOpen,
-                                contentDescription = "Projects menu"
+                                contentDescription = "Projects",
+                                tint = Color(0xFFD9E9FB),
+                                modifier = Modifier.size(22.dp)
                             )
                         }
-                        IconButton(onClick = {
-                            if (currentRoute != Routes.SETTINGS) {
-                                navController.navigate(Routes.SETTINGS) {
-                                    launchSingleTop = true
+                        IconButton(
+                            onClick = {
+                                if (currentRoute != Routes.SETTINGS) {
+                                    navController.navigate(Routes.SETTINGS) {
+                                        launchSingleTop = true
+                                    }
                                 }
-                            }
-                        }) {
+                            },
+                            modifier = Modifier.size(40.dp)
+                        ) {
                             Icon(
                                 imageVector = Icons.Filled.Settings,
-                                contentDescription = "Settings"
+                                contentDescription = "Settings",
+                                tint = Color(0xFFD9E9FB),
+                                modifier = Modifier.size(22.dp)
                             )
                         }
                     }
-                )
+                }
             }
         },
         bottomBar = {
@@ -130,29 +185,63 @@ fun JarVisionApp() {
                         .fillMaxWidth()
                         .background(Color(0xFF0A1019))
                         .navigationBarsPadding()
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .padding(horizontal = 12.dp, vertical = 4.dp)
                 ) {
-                    NavigationBar(
-                        modifier = Modifier.clip(RoundedCornerShape(22.dp)),
-                        containerColor = Color(0xFF101A27),
-                        tonalElevation = 8.dp,
-                        windowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp)
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(22.dp),
+                        color = Color(0xFF101A27)
                     ) {
-                        tabs.forEach { tab ->
-                            NavigationBarItem(
-                                selected = currentRoute == tab.route,
-                                onClick = {
-                                    navController.navigate(tab.route) {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
-                                        }
-                                        launchSingleTop = true
-                                        restoreState = true
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(62.dp)
+                                .padding(horizontal = 5.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            tabs.forEach { tab ->
+                                val selected = currentRoute == tab.route
+                                Surface(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight()
+                                        .clickable {
+                                            navController.navigate(tab.route) {
+                                                popUpTo(navController.graph.findStartDestination().id) {
+                                                    saveState = true
+                                                }
+                                                launchSingleTop = true
+                                                restoreState = true
+                                            }
+                                        },
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = if (selected) Color(0xFF3A3859) else Color.Transparent
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(vertical = 3.dp),
+                                        horizontalAlignment = Alignment.CenterHorizontally,
+                                        verticalArrangement = Arrangement.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = tab.icon,
+                                            contentDescription = tab.label,
+                                            modifier = Modifier.size(20.dp),
+                                            tint = if (selected) Color(0xFFD9C8FF)
+                                            else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Spacer(Modifier.height(1.dp))
+                                        Text(
+                                            text = tab.label,
+                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
+                                            color = if (selected) Color(0xFF8DC4FF)
+                                            else MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1
+                                        )
                                     }
-                                },
-                                icon = { Icon(tab.icon, contentDescription = null) },
-                                label = { Text(tab.label) }
-                            )
+                                }
+                            }
                         }
                     }
                 }
