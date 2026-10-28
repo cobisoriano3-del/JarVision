@@ -198,7 +198,7 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    suspend fun loadEntryVisual(entry: StorageEntry, state: FilesUiState): EntryVisual =
+    internal suspend fun loadEntryVisual(entry: StorageEntry, state: FilesUiState): EntryVisual =
         withContext(Dispatchers.IO) {
             entryVisualLoadSemaphore.withPermit { entryVisualLoader.load(entry, state) }
         }

@@ -951,6 +951,7 @@ fun FilesScreen(
                     BrowserState(
                         modifier = Modifier.weight(1f),
                         state = state,
+                        filesViewModel = filesViewModel,
                         onChooseFolder = ::chooseFolder,
                         entries = visibleEntries,
                         viewMode = viewMode,
@@ -1844,6 +1845,7 @@ private fun FileBrowserToolbar(
 private fun BrowserState(
     modifier: Modifier = Modifier,
     state: FilesUiState,
+    filesViewModel: FilesViewModel,
     onChooseFolder: () -> Unit,
     entries: List<StorageEntry>,
     viewMode: BrowserViewMode,

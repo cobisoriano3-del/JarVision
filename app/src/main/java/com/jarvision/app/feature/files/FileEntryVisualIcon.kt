@@ -127,6 +127,7 @@ private fun iconForEntryVisual(kind: EntryVisualKind): ImageVector = when (kind)
     EntryVisualKind.GENERIC -> Icons.Filled.InsertDriveFile
 }
 
+@Composable
 private fun tintForEntryVisual(kind: EntryVisualKind): Color = when (kind) {
     EntryVisualKind.PDF -> Color(0xFFE57373)
     EntryVisualKind.IMAGE -> Color(0xFF65C985)
