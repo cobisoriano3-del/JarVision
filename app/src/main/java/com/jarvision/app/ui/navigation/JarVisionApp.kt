@@ -97,6 +97,7 @@ fun JarVisionApp() {
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route ?: Routes.FILES
     val primaryRoutes = setOf(Routes.FILES, Routes.PROJECTS, Routes.TOOLS)
+    val isPrimaryDashboard = currentRoute == Routes.PROJECTS || currentRoute == Routes.TOOLS
     val tabs = listOf(
         MainTab(Routes.FILES, "Files", Icons.Filled.FolderOpen),
         MainTab(Routes.PROJECTS, "Projects", Icons.Filled.Workspaces),
