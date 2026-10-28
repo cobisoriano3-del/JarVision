@@ -116,6 +116,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.onSizeChanged
@@ -916,7 +917,7 @@ fun FilesScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(Brush.verticalGradient(listOf(Color(0xFF020B18), Color(0xFF03172D), Color(0xFF020B18))))
     ) {
         // Keep the blue toolbar background behind the invisible status-bar area.
         Box(
@@ -924,7 +925,7 @@ fun FilesScreen(
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
                 .windowInsetsTopHeight(WindowInsets.statusBarsIgnoringVisibility)
-                .background(Color(0xFF082D59))
+                .background(Brush.verticalGradient(listOf(Color(0xFF061B36), Color(0xFF020B18))))
         )
 
         // Reserve hidden system-bar dimensions for controls, without showing either system bar.
@@ -1650,9 +1651,12 @@ private fun FileBrowserToolbar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .heightIn(min = 58.dp)
-                .background(Color(0xFF082D59))
-                .padding(horizontal = 4.dp, vertical = 3.dp),
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+                .clip(RoundedCornerShape(20.dp))
+                .background(Brush.horizontalGradient(listOf(Color(0xFF082447), Color(0xFF06172D), Color(0xFF082447))))
+                .border(BorderStroke(1.dp, Color(0xFF1D4A78).copy(alpha = 0.78f)), RoundedCornerShape(20.dp))
+                .padding(horizontal = 5.dp, vertical = 3.dp)
+                .heightIn(min = 58.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             IconButton(onClick = onBack, enabled = selectionMode || canNavigateBack) {
@@ -1726,7 +1730,7 @@ private fun FileBrowserToolbar(
                     onClick = onToggleSearch,
                     modifier = Modifier
                         .clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xFF174777).copy(alpha = 0.38f))
+                        .background(Color(0xFF0B2C4D).copy(alpha = 0.86f))
                 ) {
                     Icon(
                         imageVector = if (searchExpanded) Icons.Filled.Close else Icons.Filled.Search,
@@ -1742,7 +1746,7 @@ private fun FileBrowserToolbar(
                     onClick = { viewMenuExpanded = true },
                     modifier = Modifier
                         .clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xFF174777).copy(alpha = 0.38f))
+                        .background(Color(0xFF0B2C4D).copy(alpha = 0.86f))
                 ) {
                     Icon(Icons.Filled.ViewList, contentDescription = "View and sort options", tint = Color.White)
                 }
@@ -1750,10 +1754,10 @@ private fun FileBrowserToolbar(
                     expanded = viewMenuExpanded,
                     onDismissRequest = { viewMenuExpanded = false },
                     shape = RoundedCornerShape(18.dp),
-                    containerColor = Color(0xFF10345D),
+                    containerColor = Color(0xFF071B32),
                     tonalElevation = 0.dp,
                     shadowElevation = 16.dp,
-                    border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
+                    border = BorderStroke(1.dp, Color(0xFF1D5A96).copy(alpha = 0.9f))
                 ) {
                     DropdownMenuItem(
                         text = { Text("Compact") },
@@ -1815,10 +1819,10 @@ private fun FileBrowserToolbar(
                     expanded = sortMenuExpanded,
                     onDismissRequest = { sortMenuExpanded = false },
                     shape = RoundedCornerShape(18.dp),
-                    containerColor = Color(0xFF10345D),
+                    containerColor = Color(0xFF071B32),
                     tonalElevation = 0.dp,
                     shadowElevation = 16.dp,
-                    border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
+                    border = BorderStroke(1.dp, Color(0xFF1D5A96).copy(alpha = 0.9f))
                 ) {
                     BrowserSortOrder.entries.forEach { option ->
                         DropdownMenuItem(
@@ -1842,7 +1846,7 @@ private fun FileBrowserToolbar(
                     onClick = { overflowExpanded = true },
                     modifier = Modifier
                         .clip(RoundedCornerShape(14.dp))
-                        .background(Color(0xFF174777).copy(alpha = 0.38f))
+                        .background(Color(0xFF0B2C4D).copy(alpha = 0.86f))
                 ) {
                     Icon(Icons.Filled.MoreVert, contentDescription = "More options", tint = Color.White)
                 }
@@ -1850,10 +1854,10 @@ private fun FileBrowserToolbar(
                     expanded = overflowExpanded,
                     onDismissRequest = { overflowExpanded = false },
                     shape = RoundedCornerShape(18.dp),
-                    containerColor = Color(0xFF10345D),
+                    containerColor = Color(0xFF071B32),
                     tonalElevation = 0.dp,
                     shadowElevation = 16.dp,
-                    border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
+                    border = BorderStroke(1.dp, Color(0xFF1D5A96).copy(alpha = 0.9f))
                 ) {
                     if (selectionMode) {
                         DropdownMenuItem(text = { Text("Compress…") },
@@ -2049,8 +2053,8 @@ private fun FileBrowserToolbar(
             ) {
                 Surface(
                     modifier = Modifier.width(toolbarWidth),
-                    shape = RectangleShape,
-                    color = Color(0xFF10345D),
+                    shape = RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp),
+                    color = Color(0xFF071B32),
                     tonalElevation = 0.dp,
                     shadowElevation = 8.dp,
                     border = BorderStroke(1.dp, Color(0xFF397AB5))
@@ -2332,7 +2336,7 @@ private fun FileEntryRow(
         modifier = Modifier
             .fillMaxWidth()
             .combinedClickable(onClick = onClick, onLongClick = onLongClick),
-        shape = RoundedCornerShape(if (compact) 9.dp else 12.dp),
+        shape = RoundedCornerShape(if (compact) 11.dp else 15.dp),
         colors = CardDefaults.cardColors(
             containerColor = if (selected) {
                 MaterialTheme.colorScheme.primary.copy(alpha = 0.19f)
