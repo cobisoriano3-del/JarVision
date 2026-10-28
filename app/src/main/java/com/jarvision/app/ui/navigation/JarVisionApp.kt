@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
+import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
@@ -105,6 +107,7 @@ fun JarVisionApp() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color(0xFF0D3159))
+                        .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
                         .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
                         .height(48.dp)
                         .padding(horizontal = 8.dp),
@@ -186,6 +189,7 @@ fun JarVisionApp() {
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color(0xFF0A1019))
+                        .windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility)
                         .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
                         .padding(horizontal = 12.dp, vertical = 4.dp)
                 ) {
@@ -250,11 +254,24 @@ fun JarVisionApp() {
             }
         }
     ) { innerPadding ->
-        val contentModifier = if (currentRoute == Routes.FILES) {
-            // The Files screen draws its own status-bar background and applies safe insets to controls.
-            Modifier.padding(bottom = innerPadding.calculateBottomPadding())
-        } else {
-            Modifier.padding(innerPadding)
+        val horizontalCutoutInsets =
+            WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal)
+        val contentModifier = when {
+            currentRoute == Routes.FILES -> {
+                // FilesScreen reserves its own hidden status-bar inset; Scaffold still reserves the bottom bar.
+                Modifier.padding(bottom = innerPadding.calculateBottomPadding())
+            }
+            currentRoute in primaryRoutes -> {
+                // The custom bottom navigation already includes the hidden navigation-bar inset.
+                Modifier.padding(innerPadding).windowInsetsPadding(horizontalCutoutInsets)
+            }
+            else -> {
+                // Secondary destinations have no bottom bar, so reserve the hidden navigation-bar area here.
+                Modifier
+                    .padding(innerPadding)
+                    .windowInsetsPadding(horizontalCutoutInsets)
+                    .windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility)
+            }
         }
         NavHost(
             navController = navController,

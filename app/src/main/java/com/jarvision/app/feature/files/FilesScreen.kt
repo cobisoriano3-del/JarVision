@@ -31,6 +31,7 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -45,6 +46,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.displayCutout
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.WindowInsets
@@ -842,10 +846,20 @@ fun FilesScreen(
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
     ) {
-        // Keep controls clear of horizontal display cutouts without reserving vertical space.
+        // Keep the blue toolbar background behind the invisible status-bar area.
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .windowInsetsTopHeight(WindowInsets.statusBarsIgnoringVisibility)
+                .background(Color(0xFF082D59))
+        )
+
+        // Reserve hidden system-bar dimensions for controls, without showing either system bar.
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
                 .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
         ) {
         when {
@@ -1423,293 +1437,414 @@ private fun FileBrowserToolbar(
     var overflowExpanded by remember { mutableStateOf(false) }
     var createMenuExpanded by remember { mutableStateOf(false) }
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .heightIn(min = 58.dp)
-            .background(Color(0xFF082D59))
-            .padding(horizontal = 4.dp, vertical = 3.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        IconButton(onClick = onBack, enabled = selectionMode || canNavigateBack) {
-            Icon(
-                imageVector = if (selectionMode) Icons.Filled.Close else Icons.Filled.ArrowBack,
-                contentDescription = if (selectionMode) "Exit selection mode" else "Navigate back",
-                tint = Color.White
-            )
-        }
+    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+        val compactActions = maxWidth < 380.dp
+        val veryCompact = maxWidth < 280.dp
 
-        Column(modifier = Modifier.weight(1f)) {
-            if (searchExpanded) {
-                TextField(
-                    value = searchQuery,
-                    onValueChange = onSearchQueryChange,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(end = 6.dp)
-                        .heightIn(min = 48.dp, max = 56.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    singleLine = true,
-                    placeholder = { Text("Search this folder") },
-                    colors = TextFieldDefaults.colors(
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White,
-                        cursorColor = Color(0xFF9DCEFF),
-                        focusedPlaceholderColor = Color(0xFFB6D7F4),
-                        unfocusedPlaceholderColor = Color(0xFF9FBFE0),
-                        focusedContainerColor = Color(0xFF174777),
-                        unfocusedContainerColor = Color(0xFF10365F),
-                        focusedIndicatorColor = Color.Transparent,
-                        unfocusedIndicatorColor = Color.Transparent
-                    )
-                )
-            } else {
-                Text(
-                    text = title,
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Text(
-                    text = path,
-                    color = Color.White.copy(alpha = 0.76f),
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-        }
-
-        if (clipboardPresent) {
-            TextButton(onClick = onPaste, enabled = canPaste) {
-                Text("Paste", color = Color.White)
-            }
-        }
-
-        if (selectionMode && selectedCount > 0 && canMutateFiles) {
-            IconButton(onClick = onDeleteSelected) {
-                Icon(Icons.Filled.Delete, contentDescription = "Delete selected items", tint = Color.White)
-            }
-        }
-
-        IconButton(
-            onClick = onToggleSearch,
+        Row(
             modifier = Modifier
-                .clip(RoundedCornerShape(14.dp))
-                .background(Color(0xFF174777).copy(alpha = 0.38f))
+                .fillMaxWidth()
+                .heightIn(min = 58.dp)
+                .background(Color(0xFF082D59))
+                .padding(horizontal = 4.dp, vertical = 3.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                imageVector = if (searchExpanded) Icons.Filled.Close else Icons.Filled.Search,
-                contentDescription = if (searchExpanded) "Close search" else "Search",
-                tint = Color.White
-            )
-        }
+            IconButton(onClick = onBack, enabled = selectionMode || canNavigateBack) {
+                Icon(
+                    imageVector = if (selectionMode) Icons.Filled.Close else Icons.Filled.ArrowBack,
+                    contentDescription = if (selectionMode) "Exit selection mode" else "Navigate back",
+                    tint = Color.White
+                )
+            }
 
-        Box {
-            IconButton(
-                onClick = { viewMenuExpanded = true },
-                modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF174777).copy(alpha = 0.38f))
-            ) {
-                Icon(Icons.Filled.ViewList, contentDescription = "View and sort options", tint = Color.White)
+            Column(modifier = Modifier.weight(1f).widthIn(min = 0.dp)) {
+                if (searchExpanded) {
+                    TextField(
+                        value = searchQuery,
+                        onValueChange = onSearchQueryChange,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(end = 6.dp)
+                            .heightIn(min = 48.dp, max = 56.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        singleLine = true,
+                        placeholder = { Text("Search this folder") },
+                        colors = TextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            cursorColor = Color(0xFF9DCEFF),
+                            focusedPlaceholderColor = Color(0xFFB6D7F4),
+                            unfocusedPlaceholderColor = Color(0xFF9FBFE0),
+                            focusedContainerColor = Color(0xFF174777),
+                            unfocusedContainerColor = Color(0xFF10365F),
+                            focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent
+                        )
+                    )
+                } else {
+                    Text(
+                        text = title,
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = path,
+                        color = Color.White.copy(alpha = 0.76f),
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
-            DropdownMenu(
-                expanded = viewMenuExpanded,
-                onDismissRequest = { viewMenuExpanded = false },
-                shape = RoundedCornerShape(18.dp),
-                containerColor = Color(0xFF10345D),
-                tonalElevation = 0.dp,
-                shadowElevation = 16.dp,
-                border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Compact") },
-                    leadingIcon = { Icon(Icons.Filled.ViewList, contentDescription = null) },
-                    trailingIcon = {
-                        if (viewMode == BrowserViewMode.COMPACT) Icon(Icons.Filled.Check, contentDescription = null)
-                    },
-                    onClick = {
-                        onViewModeChange(BrowserViewMode.COMPACT)
-                        viewMenuExpanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Detailed") },
-                    leadingIcon = { Icon(Icons.Filled.ViewList, contentDescription = null) },
-                    trailingIcon = {
-                        if (viewMode == BrowserViewMode.DETAILED) Icon(Icons.Filled.Check, contentDescription = null)
-                    },
-                    onClick = {
-                        onViewModeChange(BrowserViewMode.DETAILED)
-                        viewMenuExpanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Grid") },
-                    leadingIcon = { Icon(Icons.Filled.GridView, contentDescription = null) },
-                    trailingIcon = {
-                        if (viewMode == BrowserViewMode.GRID) Icon(Icons.Filled.Check, contentDescription = null)
-                    },
-                    onClick = {
-                        onViewModeChange(BrowserViewMode.GRID)
-                        viewMenuExpanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text(if (showHiddenFiles) "Hide hidden files" else "Show hidden files") },
-                    onClick = {
-                        onToggleHiddenFiles()
-                        viewMenuExpanded = false
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Sort by…") },
-                    leadingIcon = { Icon(Icons.Filled.Sort, contentDescription = null) },
-                    onClick = {
-                        viewMenuExpanded = false
-                        sortMenuExpanded = true
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text(if (sortDescending) "Order: Descending" else "Order: Ascending") },
-                    onClick = {
-                        onToggleSortDirection()
-                        viewMenuExpanded = false
-                    }
-                )
+
+            if (clipboardPresent && !compactActions) {
+                TextButton(onClick = onPaste, enabled = canPaste) {
+                    Text("Paste", color = Color.White)
+                }
             }
-            DropdownMenu(
-                expanded = sortMenuExpanded,
-                onDismissRequest = { sortMenuExpanded = false },
-                shape = RoundedCornerShape(18.dp),
-                containerColor = Color(0xFF10345D),
-                tonalElevation = 0.dp,
-                shadowElevation = 16.dp,
-                border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
-            ) {
-                BrowserSortOrder.entries.forEach { option ->
+
+            if (selectionMode && selectedCount > 0 && canMutateFiles && !compactActions) {
+                IconButton(onClick = onDeleteSelected) {
+                    Icon(Icons.Filled.Delete, contentDescription = "Delete selected items", tint = Color.White)
+                }
+            }
+
+            if (!veryCompact) {
+                IconButton(
+                    onClick = onToggleSearch,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFF174777).copy(alpha = 0.38f))
+                ) {
+                    Icon(
+                        imageVector = if (searchExpanded) Icons.Filled.Close else Icons.Filled.Search,
+                        contentDescription = if (searchExpanded) "Close search" else "Search",
+                        tint = Color.White
+                    )
+                }
+            }
+
+            if (!veryCompact) {
+            Box {
+                IconButton(
+                    onClick = { viewMenuExpanded = true },
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFF174777).copy(alpha = 0.38f))
+                ) {
+                    Icon(Icons.Filled.ViewList, contentDescription = "View and sort options", tint = Color.White)
+                }
+                DropdownMenu(
+                    expanded = viewMenuExpanded,
+                    onDismissRequest = { viewMenuExpanded = false },
+                    shape = RoundedCornerShape(18.dp),
+                    containerColor = Color(0xFF10345D),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 16.dp,
+                    border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
+                ) {
                     DropdownMenuItem(
-                        text = { Text(option.name.lowercase(Locale.ROOT).replaceFirstChar { it.uppercase() }) },
+                        text = { Text("Compact") },
+                        leadingIcon = { Icon(Icons.Filled.ViewList, contentDescription = null) },
                         trailingIcon = {
-                            if (sortOrder == option) Icon(Icons.Filled.Check, contentDescription = null)
+                            if (viewMode == BrowserViewMode.COMPACT) Icon(Icons.Filled.Check, contentDescription = null)
                         },
                         onClick = {
-                            onSortOrderChange(option)
-                            sortMenuExpanded = false
+                            onViewModeChange(BrowserViewMode.COMPACT)
+                            viewMenuExpanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Detailed") },
+                        leadingIcon = { Icon(Icons.Filled.ViewList, contentDescription = null) },
+                        trailingIcon = {
+                            if (viewMode == BrowserViewMode.DETAILED) Icon(Icons.Filled.Check, contentDescription = null)
+                        },
+                        onClick = {
+                            onViewModeChange(BrowserViewMode.DETAILED)
+                            viewMenuExpanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Grid") },
+                        leadingIcon = { Icon(Icons.Filled.GridView, contentDescription = null) },
+                        trailingIcon = {
+                            if (viewMode == BrowserViewMode.GRID) Icon(Icons.Filled.Check, contentDescription = null)
+                        },
+                        onClick = {
+                            onViewModeChange(BrowserViewMode.GRID)
+                            viewMenuExpanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (showHiddenFiles) "Hide hidden files" else "Show hidden files") },
+                        onClick = {
+                            onToggleHiddenFiles()
+                            viewMenuExpanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Sort by…") },
+                        leadingIcon = { Icon(Icons.Filled.Sort, contentDescription = null) },
+                        onClick = {
+                            viewMenuExpanded = false
+                            sortMenuExpanded = true
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text(if (sortDescending) "Order: Descending" else "Order: Ascending") },
+                        onClick = {
+                            onToggleSortDirection()
+                            viewMenuExpanded = false
                         }
                     )
                 }
+                DropdownMenu(
+                    expanded = sortMenuExpanded,
+                    onDismissRequest = { sortMenuExpanded = false },
+                    shape = RoundedCornerShape(18.dp),
+                    containerColor = Color(0xFF10345D),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 16.dp,
+                    border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
+                ) {
+                    BrowserSortOrder.entries.forEach { option ->
+                        DropdownMenuItem(
+                            text = { Text(option.name.lowercase(Locale.ROOT).replaceFirstChar { it.uppercase() }) },
+                            trailingIcon = {
+                                if (sortOrder == option) Icon(Icons.Filled.Check, contentDescription = null)
+                            },
+                            onClick = {
+                                onSortOrderChange(option)
+                                sortMenuExpanded = false
+                            }
+                        )
+                    }
+                }
             }
-        }
 
-        Box {
-            IconButton(
-                onClick = { overflowExpanded = true },
-                modifier = Modifier
-                    .clip(RoundedCornerShape(14.dp))
-                    .background(Color(0xFF174777).copy(alpha = 0.38f))
-            ) {
-                Icon(Icons.Filled.MoreVert, contentDescription = "More options", tint = Color.White)
             }
-            DropdownMenu(
-                expanded = overflowExpanded,
-                onDismissRequest = { overflowExpanded = false },
-                shape = RoundedCornerShape(18.dp),
-                containerColor = Color(0xFF10345D),
-                tonalElevation = 0.dp,
-                shadowElevation = 16.dp,
-                border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
-            ) {
-                DropdownMenuItem(
-                    text = { Text(if (selectionMode) "Stop multi-select" else "Multi-select") },
-                    onClick = {
-                        overflowExpanded = false
-                        onToggleMultiSelect()
+
+            Box {
+                IconButton(
+                    onClick = { overflowExpanded = true },
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(Color(0xFF174777).copy(alpha = 0.38f))
+                ) {
+                    Icon(Icons.Filled.MoreVert, contentDescription = "More options", tint = Color.White)
+                }
+                DropdownMenu(
+                    expanded = overflowExpanded,
+                    onDismissRequest = { overflowExpanded = false },
+                    shape = RoundedCornerShape(18.dp),
+                    containerColor = Color(0xFF10345D),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 16.dp,
+                    border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
+                ) {
+                    if (clipboardPresent && compactActions) {
+                        DropdownMenuItem(
+                            text = { Text("Paste") },
+                            enabled = canPaste,
+                            onClick = {
+                                overflowExpanded = false
+                                onPaste()
+                            }
+                        )
                     }
-                )
-                DropdownMenuItem(
-                    text = { Text("Create  ›") },
-                    enabled = canMutateFiles,
-                    onClick = {
-                        overflowExpanded = false
-                        createMenuExpanded = true
+                    if (selectionMode && selectedCount > 0 && canMutateFiles && compactActions) {
+                        DropdownMenuItem(
+                            text = { Text("Delete selected items") },
+                            leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                            onClick = {
+                                overflowExpanded = false
+                                onDeleteSelected()
+                            }
+                        )
                     }
-                )
-                if (needsSafWriteGrant) {
+                    if (veryCompact) {
+                        DropdownMenuItem(
+                            text = { Text(if (searchExpanded) "Close search" else "Search") },
+                            leadingIcon = {
+                                Icon(
+                                    if (searchExpanded) Icons.Filled.Close else Icons.Filled.Search,
+                                    contentDescription = null
+                                )
+                            },
+                            onClick = {
+                                overflowExpanded = false
+                                onToggleSearch()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("View: Compact") },
+                            leadingIcon = { Icon(Icons.Filled.ViewList, contentDescription = null) },
+                            trailingIcon = {
+                                if (viewMode == BrowserViewMode.COMPACT) Icon(Icons.Filled.Check, contentDescription = null)
+                            },
+                            onClick = {
+                                overflowExpanded = false
+                                onViewModeChange(BrowserViewMode.COMPACT)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("View: Detailed") },
+                            leadingIcon = { Icon(Icons.Filled.ViewList, contentDescription = null) },
+                            trailingIcon = {
+                                if (viewMode == BrowserViewMode.DETAILED) Icon(Icons.Filled.Check, contentDescription = null)
+                            },
+                            onClick = {
+                                overflowExpanded = false
+                                onViewModeChange(BrowserViewMode.DETAILED)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("View: Grid") },
+                            leadingIcon = { Icon(Icons.Filled.GridView, contentDescription = null) },
+                            trailingIcon = {
+                                if (viewMode == BrowserViewMode.GRID) Icon(Icons.Filled.Check, contentDescription = null)
+                            },
+                            onClick = {
+                                overflowExpanded = false
+                                onViewModeChange(BrowserViewMode.GRID)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (showHiddenFiles) "Hide hidden files" else "Show hidden files") },
+                            onClick = {
+                                overflowExpanded = false
+                                onToggleHiddenFiles()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Sort by: Name") },
+                            onClick = {
+                                overflowExpanded = false
+                                onSortOrderChange(BrowserSortOrder.NAME)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Sort by: Size") },
+                            onClick = {
+                                overflowExpanded = false
+                                onSortOrderChange(BrowserSortOrder.SIZE)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Sort by: Date") },
+                            onClick = {
+                                overflowExpanded = false
+                                onSortOrderChange(BrowserSortOrder.DATE)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Sort by: Type") },
+                            onClick = {
+                                overflowExpanded = false
+                                onSortOrderChange(BrowserSortOrder.TYPE)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (sortDescending) "Order: Descending" else "Order: Ascending") },
+                            onClick = {
+                                overflowExpanded = false
+                                onToggleSortDirection()
+                            }
+                        )
+                    }
+
                     DropdownMenuItem(
-                        text = { Text("Grant write access") },
+                        text = { Text(if (selectionMode) "Stop multi-select" else "Multi-select") },
                         onClick = {
                             overflowExpanded = false
-                            onGrantWriteAccess()
+                            onToggleMultiSelect()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Create  ›") },
+                        enabled = canMutateFiles,
+                        onClick = {
+                            overflowExpanded = false
+                            createMenuExpanded = true
+                        }
+                    )
+                    if (needsSafWriteGrant) {
+                        DropdownMenuItem(
+                            text = { Text("Grant write access") },
+                            onClick = {
+                                overflowExpanded = false
+                                onGrantWriteAccess()
+                            }
+                        )
+                    }
+                    DropdownMenuItem(
+                        text = { Text(if (shizukuConnected) "Browse protected folders" else "Connect Shizuku") },
+                        onClick = {
+                            overflowExpanded = false
+                            onOpenShizuku()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Settings") },
+                        onClick = {
+                            overflowExpanded = false
+                            onOpenSettings()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("About") },
+                        onClick = {
+                            overflowExpanded = false
+                            onAbout()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Exit") },
+                        leadingIcon = { Icon(Icons.Filled.Close, contentDescription = null) },
+                        onClick = {
+                            overflowExpanded = false
+                            onExit()
                         }
                     )
                 }
-                DropdownMenuItem(
-                    text = { Text(if (shizukuConnected) "Browse protected folders" else "Connect Shizuku") },
-                    onClick = {
-                        overflowExpanded = false
-                        onOpenShizuku()
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Settings") },
-                    onClick = {
-                        overflowExpanded = false
-                        onOpenSettings()
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("About") },
-                    onClick = {
-                        overflowExpanded = false
-                        onAbout()
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("Exit") },
-                    leadingIcon = { Icon(Icons.Filled.Close, contentDescription = null) },
-                    onClick = {
-                        overflowExpanded = false
-                        onExit()
-                    }
-                )
-            }
-            DropdownMenu(
-                expanded = createMenuExpanded,
-                onDismissRequest = { createMenuExpanded = false },
-                shape = RoundedCornerShape(18.dp),
-                containerColor = Color(0xFF10345D),
-                tonalElevation = 0.dp,
-                shadowElevation = 16.dp,
-                border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
-            ) {
-                DropdownMenuItem(
-                    text = { Text("Folder") },
-                    leadingIcon = { Icon(Icons.Filled.CreateNewFolder, contentDescription = null) },
-                    onClick = {
-                        createMenuExpanded = false
-                        onCreateFolder()
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("File") },
-                    leadingIcon = { Icon(Icons.Filled.Description, contentDescription = null) },
-                    onClick = {
-                        createMenuExpanded = false
-                        onCreateFile()
-                    }
-                )
-                DropdownMenuItem(
-                    text = { Text("ZIP archive") },
-                    leadingIcon = { Icon(Icons.Filled.Archive, contentDescription = null) },
-                    onClick = {
-                        createMenuExpanded = false
-                        onCreateArchive()
-                    }
-                )
+                DropdownMenu(
+                    expanded = createMenuExpanded,
+                    onDismissRequest = { createMenuExpanded = false },
+                    shape = RoundedCornerShape(18.dp),
+                    containerColor = Color(0xFF10345D),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 16.dp,
+                    border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
+                ) {
+                    DropdownMenuItem(
+                        text = { Text("Folder") },
+                        leadingIcon = { Icon(Icons.Filled.CreateNewFolder, contentDescription = null) },
+                        onClick = {
+                            createMenuExpanded = false
+                            onCreateFolder()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("File") },
+                        leadingIcon = { Icon(Icons.Filled.Description, contentDescription = null) },
+                        onClick = {
+                            createMenuExpanded = false
+                            onCreateFile()
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("ZIP archive") },
+                        leadingIcon = { Icon(Icons.Filled.Archive, contentDescription = null) },
+                        onClick = {
+                            createMenuExpanded = false
+                            onCreateArchive()
+                        }
+                    )
+                }
             }
         }
     }
