@@ -1304,7 +1304,7 @@ fun FilesScreen(
                     title = { Text("JarVision") },
                     text = {
                         Text(
-                            "JarVision 0.7.0\nA compact Android file manager with local file operations and ZIP tools. Shizuku browsing remains read-only."
+                            "JarVision 0.7.0\nA compact Android file manager with local file operations and ZIP tools. Shizuku supports creation of new folders, empty files, and empty ZIPs where permissions allow; existing items remain read-only."
                         )
                     },
                     confirmButton = {
@@ -2055,7 +2055,7 @@ private fun BrowserState(
     ) {
         if (state.accessMode == StorageAccessMode.SHIZUKU_STORAGE) {
             Text(
-                text = "READ-ONLY · Shizuku",
+                text = "CREATE-ONLY · Shizuku",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
