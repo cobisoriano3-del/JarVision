@@ -1,4 +1,19 @@
 package com.jarvision.app.ui.navigation
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.draw.clip
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.material3.TextField
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.foundation.layout.windowInsetsTopHeight
+import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -88,95 +103,178 @@ fun JarVisionApp() {
         MainTab(Routes.TOOLS, "Tools", Icons.Filled.Build)
     )
 
+    var searchExpanded by remember { mutableStateOf(false) }
+    var searchQuery by remember { mutableStateOf("") }
+    var gridView by remember { mutableStateOf(false) }
+    var overflowExpanded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(currentRoute) {
+        if (!isPrimaryDashboard) {
+            searchExpanded = false
+            searchQuery = ""
+            overflowExpanded = false
+        }
+    }
+
+    fun navigateTo(route: String) {
+        navController.navigate(route) {
+            launchSingleTop = true
+            if (route in primaryRoutes) {
+                popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+                restoreState = true
+            }
+        }
+    }
+
     Scaffold(
         contentWindowInsets = WindowInsets(0.dp, 0.dp, 0.dp, 0.dp),
         topBar = {
-            if (currentRoute != Routes.FILES) {
-                val toolbarTitle = when (currentRoute) {
-                    Routes.PROJECTS -> "Projects"
-                    Routes.TOOLS -> "Tools"
-                    Routes.EDITOR -> "Universal Editor"
-                    Routes.ARCHIVES -> "Archive Tools"
-                    Routes.DUAL_SPACE -> "Dual Space"
-                    Routes.ADVANCED_ACCESS -> "Advanced Access"
-                    Routes.SETTINGS -> "Settings"
-                    else -> "JarVision"
-                }
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFF0D3159))
-                        .windowInsetsPadding(WindowInsets.statusBarsIgnoringVisibility)
-                        .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
-                        .height(48.dp)
-                        .padding(horizontal = 8.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (currentRoute !in primaryRoutes) {
-                            IconButton(
-                                onClick = {
-                                    if (!navController.popBackStack()) {
-                                        navController.navigate(Routes.FILES)
-                                    }
-                                },
-                                modifier = Modifier.size(40.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.ArrowBack,
-                                    contentDescription = "Back",
-                                    tint = Color(0xFFE8EDF5),
-                                    modifier = Modifier.size(22.dp)
-                                )
-                            }
-                            Spacer(Modifier.width(4.dp))
-                        }
-                        Text(
-                            text = toolbarTitle,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.SemiBold,
-                            color = Color(0xFFE8EDF5),
-                            maxLines = 1
+            when {
+                isPrimaryDashboard -> {
+                    val title = if (currentRoute == Routes.PROJECTS) "Projects" else "Tools"
+                    val subtitle = if (currentRoute == Routes.PROJECTS) "Organize your work in one place." else "Powerful tools for your files."
+                    val titleIcon = if (currentRoute == Routes.PROJECTS) Icons.Filled.FolderOpen else Icons.Filled.Build
+                    Column(Modifier.fillMaxWidth().background(Color(0xFF020B18))) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth()
+                                .windowInsetsTopHeight(WindowInsets.statusBarsIgnoringVisibility)
+                                .background(Brush.verticalGradient(listOf(Color(0xFF061A33), Color(0xFF020B18))))
                         )
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
-                            onClick = {
-                                if (currentRoute != Routes.PROJECTS) {
-                                    navController.navigate(Routes.PROJECTS) {
-                                        launchSingleTop = true
-                                    }
-                                }
-                            },
-                            modifier = Modifier.size(40.dp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth()
+                                .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
+                                .padding(horizontal = 12.dp, vertical = 5.dp)
+                                .clip(RoundedCornerShape(22.dp))
+                                .background(Brush.horizontalGradient(listOf(Color(0xFF082447), Color(0xFF06182D), Color(0xFF082447))))
+                                .border(BorderStroke(1.dp, Color(0xFF163F6A)), RoundedCornerShape(22.dp))
+                                .padding(horizontal = 9.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Filled.FolderOpen,
-                                contentDescription = "Projects",
-                                tint = Color(0xFFD9E9FB),
-                                modifier = Modifier.size(22.dp)
+                            Surface(
+                                modifier = Modifier.size(44.dp),
+                                shape = RoundedCornerShape(14.dp),
+                                color = Color(0xFF0A3767),
+                                border = BorderStroke(1.dp, Color(0xFF18518A))
+                            ) {
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(titleIcon, contentDescription = null, modifier = Modifier.size(25.dp), tint = Color(0xFFCAE5FF))
+                                }
+                            }
+                            Spacer(Modifier.width(10.dp))
+                            if (searchExpanded) {
+                                TextField(
+                                    value = searchQuery,
+                                    onValueChange = { searchQuery = it },
+                                    modifier = Modifier.weight(1f).height(48.dp),
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(14.dp),
+                                    placeholder = { Text(if (currentRoute == Routes.TOOLS) "Search tools" else "Search projects", maxLines = 1) },
+                                    colors = TextFieldDefaults.colors(
+                                        focusedTextColor = Color.White,
+                                        unfocusedTextColor = Color.White,
+                                        cursorColor = Color(0xFF79BDFF),
+                                        focusedContainerColor = Color(0xFF0A2B4B),
+                                        unfocusedContainerColor = Color(0xFF0A2B4B),
+                                        focusedIndicatorColor = Color.Transparent,
+                                        unfocusedIndicatorColor = Color.Transparent,
+                                        focusedPlaceholderColor = Color(0xFF8FB6DC),
+                                        unfocusedPlaceholderColor = Color(0xFF8FB6DC)
+                                    )
+                                )
+                            } else {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = Color(0xFFF0F6FF), maxLines = 1)
+                                    Text(subtitle, style = MaterialTheme.typography.bodySmall, color = Color(0xFFA8C0DE), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                }
+                            }
+                            ToolbarIconButton(
+                                icon = if (searchExpanded) Icons.Filled.Close else Icons.Filled.Search,
+                                description = if (searchExpanded) "Close search" else "Search",
+                                active = searchExpanded,
+                                onClick = { if (searchExpanded) { searchExpanded = false; searchQuery = "" } else searchExpanded = true }
                             )
+                            ToolbarIconButton(
+                                icon = Icons.Filled.GridView,
+                                description = if (gridView) "Switch to list view" else "Switch to grid view",
+                                active = gridView,
+                                onClick = { gridView = !gridView }
+                            )
+                            Box {
+                                IconButton(
+                                    onClick = { overflowExpanded = true },
+                                    modifier = Modifier.size(40.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF0B2C4D))
+                                ) {
+                                    Icon(Icons.Filled.MoreVert, contentDescription = "More options", tint = Color(0xFFD9E9FF))
+                                }
+                                DropdownMenu(
+                                    expanded = overflowExpanded,
+                                    onDismissRequest = { overflowExpanded = false },
+                                    shape = RoundedCornerShape(18.dp),
+                                    containerColor = Color(0xFF071B32),
+                                    tonalElevation = 0.dp,
+                                    shadowElevation = 18.dp
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Browse files") },
+                                        leadingIcon = { Icon(Icons.Filled.FolderOpen, contentDescription = null) },
+                                        onClick = { overflowExpanded = false; navigateTo(Routes.FILES) }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Settings") },
+                                        leadingIcon = { Icon(Icons.Filled.Settings, contentDescription = null) },
+                                        onClick = { overflowExpanded = false; navigateTo(Routes.SETTINGS) }
+                                    )
+                                }
+                            }
                         }
-                        IconButton(
-                            onClick = {
-                                if (currentRoute != Routes.SETTINGS) {
-                                    navController.navigate(Routes.SETTINGS) {
-                                        launchSingleTop = true
-                                    }
-                                }
-                            },
-                            modifier = Modifier.size(40.dp)
+                    }
+                }
+                currentRoute != Routes.FILES -> {
+                    val toolbarTitle = when (currentRoute) {
+                        Routes.EDITOR -> "Universal Editor"
+                        Routes.ARCHIVES -> "Archive Tools"
+                        Routes.DUAL_SPACE -> "Dual Space"
+                        Routes.ADVANCED_ACCESS -> "Advanced Access"
+                        Routes.SETTINGS -> "Settings"
+                        else -> "JarVision"
+                    }
+                    val toolbarSubtitle = when (currentRoute) {
+                        Routes.EDITOR -> "Multi-tab text and code editing."
+                        Routes.ARCHIVES -> "Create, browse, test, and extract archives."
+                        Routes.DUAL_SPACE -> "Optional side-by-side folder windows."
+                        Routes.ADVANCED_ACCESS -> "Shizuku capability and permission status."
+                        Routes.SETTINGS -> "Customize your workspace."
+                        else -> ""
+                    }
+                    Column(Modifier.fillMaxWidth().background(Color(0xFF020B18))) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth()
+                                .windowInsetsTopHeight(WindowInsets.statusBarsIgnoringVisibility)
+                                .background(Brush.verticalGradient(listOf(Color(0xFF061A33), Color(0xFF020B18))))
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth()
+                                .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
+                                .padding(horizontal = 12.dp, vertical = 5.dp)
+                                .clip(RoundedCornerShape(22.dp))
+                                .background(Brush.horizontalGradient(listOf(Color(0xFF082447), Color(0xFF06182D), Color(0xFF082447))))
+                                .border(BorderStroke(1.dp, Color(0xFF163F6A)), RoundedCornerShape(22.dp))
+                                .padding(horizontal = 7.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                imageVector = Icons.Filled.Settings,
-                                contentDescription = "Settings",
-                                tint = Color(0xFFD9E9FB),
-                                modifier = Modifier.size(22.dp)
-                            )
+                            IconButton(
+                                onClick = { if (!navController.popBackStack()) navigateTo(Routes.FILES) },
+                                modifier = Modifier.size(40.dp).clip(RoundedCornerShape(14.dp)).background(Color(0xFF0B2C4D))
+                            ) {
+                                Icon(Icons.Filled.ArrowBack, contentDescription = "Back", tint = Color(0xFFD9E9FF))
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(toolbarTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = Color(0xFFF0F6FF), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(toolbarSubtitle, style = MaterialTheme.typography.bodySmall, color = Color(0xFFA8C0DE), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            ToolbarIconButton(Icons.Filled.Workspaces, "Projects", false) { navigateTo(Routes.PROJECTS) }
+                            ToolbarIconButton(Icons.Filled.Settings, "Settings", currentRoute == Routes.SETTINGS) { navigateTo(Routes.SETTINGS) }
                         }
                     }
                 }
@@ -185,9 +283,7 @@ fun JarVisionApp() {
         bottomBar = {
             if (currentRoute in primaryRoutes) {
                 Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .background(Color(0xFF0A1019))
+                    modifier = Modifier.fillMaxWidth().background(Color(0xFF020B18))
                         .windowInsetsPadding(WindowInsets.navigationBarsIgnoringVisibility)
                         .windowInsetsPadding(WindowInsets.displayCutout.only(WindowInsetsSides.Horizontal))
                         .padding(horizontal = 12.dp, vertical = 4.dp)
@@ -195,55 +291,28 @@ fun JarVisionApp() {
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(22.dp),
-                        color = Color(0xFF101A27)
+                        color = Color(0xFF06172A),
+                        border = BorderStroke(1.dp, Color(0xFF173A60))
                     ) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(62.dp)
-                                .padding(horizontal = 5.dp, vertical = 4.dp),
+                            modifier = Modifier.fillMaxWidth().height(58.dp).padding(horizontal = 5.dp, vertical = 4.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             tabs.forEach { tab ->
                                 val selected = currentRoute == tab.route
                                 Surface(
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .fillMaxHeight()
-                                        .clickable {
-                                            navController.navigate(tab.route) {
-                                                popUpTo(navController.graph.findStartDestination().id) {
-                                                    saveState = true
-                                                }
-                                                launchSingleTop = true
-                                                restoreState = true
-                                            }
-                                        },
+                                    modifier = Modifier.weight(1f).fillMaxHeight().clickable { navigateTo(tab.route) },
                                     shape = RoundedCornerShape(16.dp),
-                                    color = if (selected) Color(0xFF3A3859) else Color.Transparent
+                                    color = if (selected) Color(0xFF087DFA) else Color.Transparent
                                 ) {
                                     Column(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(vertical = 3.dp),
+                                        modifier = Modifier.fillMaxSize().padding(vertical = 3.dp),
                                         horizontalAlignment = Alignment.CenterHorizontally,
                                         verticalArrangement = Arrangement.Center
                                     ) {
-                                        Icon(
-                                            imageVector = tab.icon,
-                                            contentDescription = tab.label,
-                                            modifier = Modifier.size(20.dp),
-                                            tint = if (selected) Color(0xFFD9C8FF)
-                                            else MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                        Spacer(Modifier.height(1.dp))
-                                        Text(
-                                            text = tab.label,
-                                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp),
-                                            color = if (selected) Color(0xFF8DC4FF)
-                                            else MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1
-                                        )
+                                        Icon(tab.icon, contentDescription = tab.label, modifier = Modifier.size(20.dp), tint = if (selected) Color.White else Color(0xFF91B5DC))
+                                        Spacer(Modifier.height(2.dp))
+                                        Text(tab.label, style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp), color = if (selected) Color.White else Color(0xFF91B5DC), maxLines = 1)
                                     }
                                 }
                             }
@@ -280,18 +349,18 @@ fun JarVisionApp() {
             composable(Routes.FILES) {
                 FilesScreen(
                     isActive = currentRoute == Routes.FILES,
-                    onOpenSettings = {
-                        navController.navigate(Routes.SETTINGS) { launchSingleTop = true }
-                    }
+                    onOpenSettings = { navigateTo(Routes.SETTINGS) }
                 )
             }
-            composable(Routes.PROJECTS) { ProjectsScreen() }
+            composable(Routes.PROJECTS) { ProjectsScreen(searchQuery = searchQuery, gridView = gridView) }
             composable(Routes.TOOLS) {
                 ToolsScreen(
-                    onOpenEditor = { navController.navigate(Routes.EDITOR) },
-                    onOpenArchives = { navController.navigate(Routes.ARCHIVES) },
-                    onOpenDualSpace = { navController.navigate(Routes.DUAL_SPACE) },
-                    onOpenAdvancedAccess = { navController.navigate(Routes.ADVANCED_ACCESS) }
+                    onOpenEditor = { navigateTo(Routes.EDITOR) },
+                    onOpenArchives = { navigateTo(Routes.ARCHIVES) },
+                    onOpenDualSpace = { navigateTo(Routes.DUAL_SPACE) },
+                    onOpenAdvancedAccess = { navigateTo(Routes.ADVANCED_ACCESS) },
+                    searchQuery = searchQuery,
+                    gridView = gridView
                 )
             }
             composable(Routes.EDITOR) { EditorScreen() }
@@ -300,5 +369,21 @@ fun JarVisionApp() {
             composable(Routes.ADVANCED_ACCESS) { AdvancedAccessScreen() }
             composable(Routes.SETTINGS) { SettingsScreen() }
         }
+    }
+}
+
+@Composable
+private fun ToolbarIconButton(
+    icon: ImageVector,
+    description: String,
+    active: Boolean,
+    onClick: () -> Unit
+) {
+    IconButton(
+        onClick = onClick,
+        modifier = Modifier.size(40.dp).clip(RoundedCornerShape(14.dp))
+            .background(if (active) Color(0xFF0B4380) else Color(0xFF0B2C4D))
+    ) {
+        Icon(icon, contentDescription = description, modifier = Modifier.size(21.dp), tint = if (active) Color(0xFF8CC9FF) else Color(0xFFD9E9FF))
     }
 }
