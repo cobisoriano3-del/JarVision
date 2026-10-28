@@ -151,7 +151,7 @@ import java.util.Date
 import java.util.Locale
 
 private data class PendingFileClipboard(
-    val entry: StorageEntry,
+    val entries: List<StorageEntry>,
     val accessMode: StorageAccessMode,
     val treeUriString: String?,
     val sourceParentDocumentId: String,
@@ -161,7 +161,7 @@ private data class PendingFileClipboard(
 
 private data class PasteConflict(
     val clipboard: PendingFileClipboard,
-    val existing: StorageEntry,
+    val existing: List<StorageEntry>,
     val destination: FolderLocation,
     val sameSource: Boolean
 )
@@ -208,7 +208,7 @@ fun FilesScreen(
     var searchExpanded by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var multiSelectMode by remember { mutableStateOf(false) }
-    var selectedEntryIds by remember { mutableStateOf(setOf<String>()) }
+    val selectedEntryIds by filesViewModel.selectedEntryIds.collectAsState()
     var bulkDeleteConfirmation by remember { mutableStateOf(false) }
     var createKind by remember { mutableStateOf<CreateItemKind?>(null) }
     var createName by remember { mutableStateOf("") }
@@ -289,6 +289,12 @@ fun FilesScreen(
             .toList()
             .sortedWith(compareBy<StorageEntry> { !it.isDirectory }.then(orderedComparator))
     }
+    val selectedEntries = remember(state.entries, selectedEntryIds) {
+        state.entries.filter { it.documentId in selectedEntryIds }
+    }
+    val selectedItemsAreArchives = selectedEntries.isNotEmpty() && selectedEntries.all {
+        !it.isDirectory && it.displayName.lowercase(Locale.ROOT).endsWith(".zip")
+    }
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
     var shouldOpenShizukuAfterConnect by remember { mutableStateOf(false) }
@@ -298,7 +304,7 @@ fun FilesScreen(
     var informationEntry by remember { mutableStateOf<StorageEntry?>(null) }
     var renameEntry by remember { mutableStateOf<StorageEntry?>(null) }
     var renameName by remember { mutableStateOf("") }
-    var compressEntry by remember { mutableStateOf<StorageEntry?>(null) }
+    var compressEntries by remember { mutableStateOf<List<StorageEntry>?>(null) }
     var compressName by remember { mutableStateOf("") }
     var deleteEntry by remember { mutableStateOf<StorageEntry?>(null) }
     var clipboard by remember { mutableStateOf<PendingFileClipboard?>(null) }
@@ -498,146 +504,135 @@ fun FilesScreen(
         coroutineScope.launch { snackbarHostState.showSnackbar(message) }
     }
 
-    fun stageClipboard(entry: StorageEntry, cut: Boolean) {
+
+    fun stageClipboard(entries: List<StorageEntry>, cut: Boolean) {
         val parent = state.currentPath.lastOrNull() ?: return
-        if (state.accessMode == StorageAccessMode.SHIZUKU_STORAGE ||
-            state.accessMode == StorageAccessMode.NONE
-        ) {
+        if (entries.isEmpty()) return
+        if (state.accessMode == StorageAccessMode.SHIZUKU_STORAGE || state.accessMode == StorageAccessMode.NONE) {
             showMessage("Copy and cut are unavailable in this storage mode.")
             selectedEntry = null
             return
         }
-        clipboard = PendingFileClipboard(
-            entry = entry,
-            accessMode = state.accessMode,
-            treeUriString = state.treeUriString,
-            sourceParentDocumentId = parent.documentId,
-            sourceParentAbsolutePath = parent.absolutePath,
-            isCut = cut
-        )
+        clipboard = PendingFileClipboard(entries.toList(), state.accessMode, state.treeUriString,
+            parent.documentId, parent.absolutePath, cut)
         selectedEntry = null
-        showMessage(if (cut) "Item marked for moving. Navigate to a destination and tap Paste."
-            else "Item copied to JarVision's clipboard. Navigate to a destination and tap Paste.")
+        showMessage(if (cut) "${entries.size} item(s) marked for moving. Navigate to a destination and tap Paste."
+            else "${entries.size} item(s) copied to JarVision's clipboard.")
     }
 
-    fun executePaste(
-        pending: PendingFileClipboard,
-        keepBoth: Boolean,
-        replaceExisting: Boolean
-    ) {
+    fun executePaste(pending: PendingFileClipboard, keepBoth: Boolean, replaceExisting: Boolean) {
         val destination = state.currentPath.lastOrNull() ?: return
-        if (pending.accessMode != state.accessMode ||
-            pending.treeUriString != state.treeUriString ||
-            state.accessMode == StorageAccessMode.SHIZUKU_STORAGE
+        if (pending.entries.isEmpty()) { showMessage("The clipboard is empty."); return }
+        if (pending.accessMode != state.accessMode || pending.treeUriString != state.treeUriString ||
+            state.accessMode == StorageAccessMode.SHIZUKU_STORAGE || !canMutateFiles
         ) {
             showMessage("Paste is limited to the same writable storage scope.")
             pasteConflict = null
             return
         }
-        if (pending.entry.isDirectory && state.currentPath.any {
-                it.documentId == pending.entry.documentId
-            }
-        ) {
+        if (pending.entries.any { source -> source.isDirectory && state.currentPath.any { it.documentId == source.documentId } }) {
             showMessage("A folder can't be pasted into itself or one of its subfolders.")
             pasteConflict = null
             return
         }
         if (pending.isCut) {
-            val sameParent = if (state.accessMode == StorageAccessMode.SHARED_STORAGE) {
+            val sameParent = if (state.accessMode == StorageAccessMode.SHARED_STORAGE)
                 pending.sourceParentAbsolutePath == destination.absolutePath
-            } else {
-                pending.sourceParentDocumentId == destination.documentId
-            }
+            else pending.sourceParentDocumentId == destination.documentId
             if (sameParent) {
                 clipboard = null
                 pasteConflict = null
-                showMessage("This item is already in that folder.")
+                filesViewModel.clearSelection()
+                showMessage("These items are already in that folder.")
                 return
             }
         }
         coroutineScope.launch {
             try {
-                val message = withContext(Dispatchers.IO) {
-                    var targetName = pending.entry.displayName
-                    if (keepBoth) {
-                        val original = pending.entry.displayName
-                        val dot = original.lastIndexOf('.')
-                        val base = if (dot > 0) original.substring(0, dot) else original
-                        val extension = if (dot > 0) original.substring(dot) else ""
-                        var suffix = 1
-                        while (fileOperations.findNamedChild(
-                                state.accessMode, state.treeUriString,
-                                destination.documentId, destination.absolutePath, targetName
-                            ) != null
-                        ) {
-                            targetName = base + " (" + suffix + ")" + extension
-                            suffix++
-                            if (suffix > 10000) throw IOException("Couldn't find an unused copy name.")
+                val results = withContext(Dispatchers.IO) {
+                    val usedNames = mutableSetOf<String>()
+                    pending.entries.map { source ->
+                        source to runCatching {
+                            var targetName = source.displayName
+                            if (keepBoth) {
+                                val dot = targetName.lastIndexOf('.')
+                                val base = if (dot > 0) targetName.substring(0, dot) else targetName
+                                val extension = if (dot > 0) targetName.substring(dot) else ""
+                                var suffix = 1
+                                while (
+                                    fileOperations.findNamedChild(state.accessMode,state.treeUriString,
+                                        destination.documentId,destination.absolutePath,targetName) != null ||
+                                    targetName.lowercase(Locale.ROOT) in usedNames
+                                ) {
+                                    targetName = base + " (" + suffix + ")" + extension
+                                    suffix++
+                                    if (suffix > 10000) throw IOException("Couldn't find an unused copy name.")
+                                }
+                            }
+                            if (!usedNames.add(targetName.lowercase(Locale.ROOT))) {
+                                throw IOException("Selected items contain duplicate destination names.")
+                            }
+                            fileOperations.copyOrMove(state.accessMode,state.treeUriString,source,
+                                destination.documentId,destination.absolutePath,targetName,
+                                moveSource = pending.isCut, replaceExisting = replaceExisting)
                         }
                     }
-                    fileOperations.copyOrMove(
-                        mode = state.accessMode,
-                        treeUriString = state.treeUriString,
-                        source = pending.entry,
-                        destinationParentDocumentId = destination.documentId,
-                        destinationParentAbsolutePath = destination.absolutePath,
-                        targetName = targetName,
-                        moveSource = pending.isCut,
-                        replaceExisting = replaceExisting
-                    )
                 }
-                clipboard = null
+                val failures = results.filter { it.second.isFailure }
+                clipboard = if (failures.isEmpty()) null else pending.copy(entries = failures.map { it.first })
                 pasteConflict = null
+                filesViewModel.setSelectedEntries(failures.map { it.first.documentId })
                 filesViewModel.refresh()
-                showMessage(message)
-            } catch (error: Exception) {
-                showMessage(error.message ?: "The file operation failed.")
-            }
+                val succeeded = results.size - failures.size
+                showMessage(if (failures.isEmpty()) "$succeeded item(s) pasted successfully."
+                    else "$succeeded pasted; ${failures.size} failed. " +
+                        (failures.first().second.exceptionOrNull()?.message ?: "Failed items remain on the clipboard."))
+            } catch (error: Exception) { showMessage(error.message ?: "The file operation failed.") }
         }
     }
 
     fun requestPaste() {
         val pending = clipboard ?: return
+        if (pending.entries.isEmpty()) { showMessage("The clipboard is empty."); return }
         val destination = state.currentPath.lastOrNull() ?: return
         if (pending.accessMode != state.accessMode || pending.treeUriString != state.treeUriString ||
-            state.accessMode == StorageAccessMode.SHIZUKU_STORAGE
-        ) {
-            showMessage("Paste is limited to the same writable storage scope.")
-            return
-        }
-        if (pending.entry.isDirectory && state.currentPath.any { it.documentId == pending.entry.documentId }) {
+            state.accessMode == StorageAccessMode.SHIZUKU_STORAGE || !canMutateFiles
+        ) { showMessage("Paste is limited to the same writable storage scope."); return }
+        if (pending.entries.any { source -> source.isDirectory && state.currentPath.any { it.documentId == source.documentId } }) {
             showMessage("A folder can't be pasted into itself or one of its subfolders.")
             return
         }
-        coroutineScope.launch {
-            try {
-                val conflict = withContext(Dispatchers.IO) {
-                    fileOperations.findNamedChild(
-                        state.accessMode, state.treeUriString,
-                        destination.documentId, destination.absolutePath,
-                        pending.entry.displayName
-                    )
-                }
-                if (conflict != null) {
-                    val sameSource = if (state.accessMode == StorageAccessMode.SHARED_STORAGE) {
-                        pending.entry.absolutePath == conflict.absolutePath
-                    } else {
-                        pending.entry.documentId == conflict.documentId
-                    }
-                    pasteConflict = PasteConflict(
-                        clipboard = pending,
-                        existing = conflict,
-                        destination = destination,
-                        sameSource = sameSource
-                    )
-                } else {
-                    executePaste(pending, keepBoth = false, replaceExisting = false)
-                }
-            } catch (error: Exception) {
-                showMessage(error.message ?: "Couldn't check the paste destination.")
+        if (pending.isCut) {
+            val sameParent = if (state.accessMode == StorageAccessMode.SHARED_STORAGE)
+                pending.sourceParentAbsolutePath == destination.absolutePath
+            else pending.sourceParentDocumentId == destination.documentId
+            if (sameParent) {
+                clipboard = null
+                filesViewModel.clearSelection()
+                showMessage("These items are already in that folder.")
+                return
             }
         }
+        coroutineScope.launch {
+            try {
+                val conflicts = withContext(Dispatchers.IO) {
+                    pending.entries.mapNotNull { source ->
+                        fileOperations.findNamedChild(state.accessMode,state.treeUriString,
+                            destination.documentId,destination.absolutePath,source.displayName)?.let { source to it }
+                    }
+                }
+                if (conflicts.isNotEmpty()) {
+                    val sameSource = conflicts.any { (source, existing) ->
+                        if (state.accessMode == StorageAccessMode.SHARED_STORAGE) source.absolutePath == existing.absolutePath
+                        else source.documentId == existing.documentId
+                    }
+                    pasteConflict = PasteConflict(pending, conflicts.map { it.second }, destination, sameSource)
+                } else executePaste(pending, keepBoth = false, replaceExisting = false)
+            } catch (error: Exception) { showMessage(error.message ?: "Couldn't check the paste destination.") }
+        }
     }
+
+
 
     fun renameSelected(entry: StorageEntry, newName: String) {
         val parent = state.currentPath.lastOrNull() ?: return
@@ -709,35 +704,59 @@ fun FilesScreen(
         }
     }
 
-    fun compressSelected(entry: StorageEntry, requestedName: String) {
+
+    fun compressSelected(entries: List<StorageEntry>, requestedName: String) {
         val destination = state.currentPath.lastOrNull() ?: return
+        if (entries.isEmpty()) return
         coroutineScope.launch {
             try {
                 val outputName = withContext(Dispatchers.IO) {
-                    fileOperations.compressToZip(
-                        state.accessMode,
-                        state.treeUriString,
-                        entry,
-                        destination.documentId,
-                        destination.absolutePath,
-                        requestedName
-                    )
+                    fileOperations.compressEntriesToZip(state.accessMode,state.treeUriString,entries,
+                        destination.documentId,destination.absolutePath,requestedName)
                 }
-                compressEntry = null
+                compressEntries = null
                 filesViewModel.refresh()
-                showMessage("Created " + outputName)
-            } catch (error: Exception) {
-                showMessage(error.message ?: "Couldn't compress this item.")
+                showMessage("Created " + outputName + " from ${entries.size} item(s).")
+            } catch (error: Exception) { showMessage(error.message ?: "Couldn't compress the selected items.") }
+        }
+    }
+
+    fun testSelectedArchives(entries: List<StorageEntry>) {
+        if (entries.isEmpty()) return
+        coroutineScope.launch {
+            val results = withContext(Dispatchers.IO) {
+                entries.map { entry -> entry to runCatching { fileOperations.testZip(state.accessMode,state.treeUriString,entry) } }
             }
+            val failures = results.filter { it.second.isFailure }
+            val passed = results.size - failures.size
+            showMessage(if (failures.isEmpty()) "All $passed ZIP archive(s) passed testing."
+                else "$passed passed; ${failures.size} failed. " +
+                    (failures.first().second.exceptionOrNull()?.message ?: "One or more archives are invalid."))
+        }
+    }
+
+    fun extractSelectedArchives(entries: List<StorageEntry>) {
+        if (entries.isEmpty()) return
+        if (!canMutateFiles) { showMessage("Extracting archives requires a writable shared-storage or SAF location."); return }
+        val destination = state.currentPath.lastOrNull() ?: return
+        coroutineScope.launch {
+            val results = withContext(Dispatchers.IO) {
+                entries.map { entry -> entry to runCatching {
+                    fileOperations.extractZipToFolder(state.accessMode,state.treeUriString,entry,
+                        destination.documentId,destination.absolutePath)
+                } }
+            }
+            filesViewModel.refresh()
+            val failures = results.filter { it.second.isFailure }
+            val extracted = results.size - failures.size
+            showMessage(if (failures.isEmpty()) "Extracted $extracted ZIP archive(s) to separate folders."
+                else "$extracted extracted; ${failures.size} failed. " +
+                    (failures.first().second.exceptionOrNull()?.message ?: "One or more archives could not be extracted."))
         }
     }
 
     fun toggleSelectedEntry(entry: StorageEntry) {
-        selectedEntryIds = if (entry.documentId in selectedEntryIds) {
-            selectedEntryIds - entry.documentId
-        } else {
-            selectedEntryIds + entry.documentId
-        }
+        filesViewModel.toggleEntrySelection(entry.documentId)
     }
 
     fun beginCreate(kind: CreateItemKind) {
@@ -804,7 +823,7 @@ fun FilesScreen(
                 }
             }
             val failures = results.filter { it.second.isFailure }
-            selectedEntryIds = failures.map { it.first.documentId }.toSet()
+            filesViewModel.setSelectedEntries(failures.map { it.first.documentId })
             if (failures.isEmpty()) multiSelectMode = false
             filesViewModel.refresh()
             val failedCount = failures.size
@@ -884,7 +903,7 @@ fun FilesScreen(
         when {
             multiSelectMode -> {
                 multiSelectMode = false
-                selectedEntryIds = emptySet()
+                filesViewModel.clearSelection()
             }
             searchExpanded -> {
                 searchExpanded = false
@@ -971,13 +990,18 @@ fun FilesScreen(
                         sortDescending = sortDescending,
                         onToggleSortDirection = { sortDescending = !sortDescending },
                         selectionMode = multiSelectMode,
-                        selectedCount = selectedEntryIds.size,
+                        selectedCount = selectedEntries.size,
+                        selectionHasItems = selectedEntries.isNotEmpty(),
+                        selectedItemsAreArchives = selectedItemsAreArchives,
+                        visibleItemCount = visibleEntries.size,
                         canMutateFiles = canMutateFiles,
                         clipboardPresent = clipboard != null,
                         canPaste = clipboard?.let {
-                            it.accessMode == state.accessMode &&
+                            it.entries.isNotEmpty() &&
+                                it.accessMode == state.accessMode &&
                                 it.treeUriString == state.treeUriString &&
-                                state.accessMode != StorageAccessMode.SHIZUKU_STORAGE
+                                state.accessMode != StorageAccessMode.SHIZUKU_STORAGE &&
+                                canMutateFiles
                         } == true,
                         needsSafWriteGrant = state.accessMode == StorageAccessMode.DOCUMENT_TREE &&
                             state.treeUriString?.let { value ->
@@ -990,17 +1014,30 @@ fun FilesScreen(
                         onBack = {
                             if (multiSelectMode) {
                                 multiSelectMode = false
-                                selectedEntryIds = emptySet()
+                                filesViewModel.clearSelection()
                             } else if (state.currentPath.size > 1) {
                                 filesViewModel.navigateBack()
                             }
                         },
                         onToggleMultiSelect = {
                             multiSelectMode = !multiSelectMode
-                            if (!multiSelectMode) selectedEntryIds = emptySet()
+                            if (!multiSelectMode) filesViewModel.clearSelection()
                             fabExpanded = false
                         },
                         onDeleteSelected = { bulkDeleteConfirmation = true },
+                        onCompressSelected = {
+                            if (selectedEntries.isNotEmpty()) {
+                                compressEntries = selectedEntries
+                                compressName = if (selectedEntries.size == 1) defaultZipName(selectedEntries.first()) else "Selected items.zip"
+                            }
+                        },
+                        onExtractSelected = { extractSelectedArchives(selectedEntries) },
+                        onTestSelected = { testSelectedArchives(selectedEntries) },
+                        onCopySelected = { stageClipboard(selectedEntries, cut = false) },
+                        onCutSelected = { stageClipboard(selectedEntries, cut = true) },
+                        onSelectAll = { filesViewModel.selectEntries(visibleEntries.map { it.documentId }) },
+                        onInvertSelection = { filesViewModel.invertSelection(visibleEntries.map { it.documentId }) },
+                        onDeselectAll = { filesViewModel.clearSelection() },
                         onPaste = ::requestPaste,
                         onGrantWriteAccess = ::chooseFolder,
                         onOpenShizuku = ::openShizukuBrowser,
@@ -1149,8 +1186,8 @@ fun FilesScreen(
                         ContextActionRow("Share", Icons.Filled.Share) { shareSelected(entry) }
                     }
                     if (canMutateFiles) {
-                        ContextActionRow("Copy", Icons.Filled.ContentCopy) { stageClipboard(entry, false) }
-                        ContextActionRow("Cut", Icons.Filled.ContentCut) { stageClipboard(entry, true) }
+                        ContextActionRow("Copy", Icons.Filled.ContentCopy) { stageClipboard(listOf(entry), false) }
+                        ContextActionRow("Cut", Icons.Filled.ContentCut) { stageClipboard(listOf(entry), true) }
                         ContextActionRow("Rename", Icons.Filled.Edit) {
                             selectedEntry = null
                             renameName = entry.displayName
@@ -1163,7 +1200,7 @@ fun FilesScreen(
                         ContextActionRow("Compress…", Icons.Filled.Archive) {
                             selectedEntry = null
                             compressName = defaultZipName(entry)
-                            compressEntry = entry
+                            compressEntries = listOf(entry)
                         }
                     }
                     if (!entry.isDirectory && entry.displayName.lowercase(Locale.ROOT).endsWith(".zip")) {
@@ -1198,14 +1235,14 @@ fun FilesScreen(
             )
         }
 
-        compressEntry?.let { entry ->
+        compressEntries?.let { entries ->
             AlertDialog(
-                onDismissRequest = { compressEntry = null },
+                onDismissRequest = { compressEntries = null },
                 title = { Text("Compress to ZIP") },
                 text = {
                     Column {
                         Text(
-                            "Create a ZIP copy of " + entry.displayName + " in the current folder. The original item will not be changed.",
+                            "Create a ZIP copy of " + entries.joinToString(", ") { it.displayName } + " in the current folder. The original items will not be changed.",
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Spacer(Modifier.height(12.dp))
@@ -1219,12 +1256,12 @@ fun FilesScreen(
                 },
                 confirmButton = {
                     TextButton(
-                        onClick = { compressSelected(entry, compressName) },
+                        onClick = { compressSelected(entries, compressName) },
                         enabled = compressName.isNotBlank()
                     ) { Text("Compress") }
                 },
                 dismissButton = {
-                    TextButton(onClick = { compressEntry = null }) { Text("Cancel") }
+                    TextButton(onClick = { compressEntries = null }) { Text("Cancel") }
                 }
             )
         }
@@ -1272,11 +1309,17 @@ fun FilesScreen(
         pasteConflict?.let { conflict ->
             AlertDialog(
                 onDismissRequest = { pasteConflict = null },
-                title = { Text("An item already exists") },
+                title = { Text(if (conflict.existing.size == 1) "An item already exists" else "Items already exist") },
                 text = {
                     Text(
-                        "A destination item named '" + conflict.existing.displayName +
+                        if (conflict.existing.size == 1) {
+                        "A destination item named '" + conflict.existing.first().displayName +
                             "' already exists. Choose Keep both to create a unique name, or Replace to overwrite it."
+                    } else {
+                        "${conflict.existing.size} destination items already exist (for example, '" +
+                            conflict.existing.take(3).joinToString("', '") { it.displayName } +
+                            "'). Choose Keep both to create unique names, or Replace to overwrite the conflicts."
+                    }
                     )
                 },
                 confirmButton = {
@@ -1368,7 +1411,7 @@ fun FilesScreen(
         if (bulkDeleteConfirmation) {
             AlertDialog(
                 onDismissRequest = { bulkDeleteConfirmation = false },
-                title = { Text("Delete ${selectedEntryIds.size} items?") },
+                title = { Text("Delete ${selectedEntries.size} items?") },
                 text = {
                     Text("This permanently deletes the selected files and folders. This action cannot be undone.")
                 },
@@ -1562,6 +1605,9 @@ private fun FileBrowserToolbar(
     onToggleSortDirection: () -> Unit,
     selectionMode: Boolean,
     selectedCount: Int,
+    selectionHasItems: Boolean,
+    selectedItemsAreArchives: Boolean,
+    visibleItemCount: Int,
     canMutateFiles: Boolean,
     clipboardPresent: Boolean,
     canPaste: Boolean,
@@ -1571,6 +1617,14 @@ private fun FileBrowserToolbar(
     onBack: () -> Unit,
     onToggleMultiSelect: () -> Unit,
     onDeleteSelected: () -> Unit,
+    onCompressSelected: () -> Unit,
+    onExtractSelected: () -> Unit,
+    onTestSelected: () -> Unit,
+    onCopySelected: () -> Unit,
+    onCutSelected: () -> Unit,
+    onSelectAll: () -> Unit,
+    onInvertSelection: () -> Unit,
+    onDeselectAll: () -> Unit,
     onPaste: () -> Unit,
     onGrantWriteAccess: () -> Unit,
     onOpenShizuku: () -> Unit,
@@ -1664,12 +1718,6 @@ private fun FileBrowserToolbar(
             if (clipboardPresent && !compactActions) {
                 TextButton(onClick = onPaste, enabled = canPaste) {
                     Text("Paste", color = Color.White)
-                }
-            }
-
-            if (selectionMode && selectedCount > 0 && canMutateFiles && !compactActions) {
-                IconButton(onClick = onDeleteSelected) {
-                    Icon(Icons.Filled.Delete, contentDescription = "Delete selected items", tint = Color.White)
                 }
             }
 
@@ -1807,23 +1855,48 @@ private fun FileBrowserToolbar(
                     shadowElevation = 16.dp,
                     border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
                 ) {
-                    if (clipboardPresent && compactActions) {
+                    if (selectionMode) {
+                        DropdownMenuItem(text = { Text("Compress…") },
+                            leadingIcon = { Icon(Icons.Filled.Archive, contentDescription = null) },
+                            enabled = selectionHasItems && canMutateFiles,
+                            onClick = { overflowExpanded = false; onCompressSelected() })
+                        if (selectedItemsAreArchives) {
+                            DropdownMenuItem(text = { Text("Extract…") },
+                                leadingIcon = { Icon(Icons.Filled.FolderOpen, contentDescription = null) },
+                                enabled = canMutateFiles,
+                                onClick = { overflowExpanded = false; onExtractSelected() })
+                            DropdownMenuItem(text = { Text("Test") },
+                                leadingIcon = { Icon(Icons.Filled.Check, contentDescription = null) },
+                                onClick = { overflowExpanded = false; onTestSelected() })
+                        }
+                        DropdownMenuItem(text = { Text("Copy") },
+                            leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
+                            enabled = selectionHasItems && canMutateFiles,
+                            onClick = { overflowExpanded = false; onCopySelected() })
+                        DropdownMenuItem(text = { Text("Cut") },
+                            leadingIcon = { Icon(Icons.Filled.ContentCut, contentDescription = null) },
+                            enabled = selectionHasItems && canMutateFiles,
+                            onClick = { overflowExpanded = false; onCutSelected() })
+                        DropdownMenuItem(text = { Text("Paste") }, enabled = canPaste,
+                            onClick = { overflowExpanded = false; onPaste() })
+                        DropdownMenuItem(text = { Text("Delete") },
+                            leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
+                            enabled = selectionHasItems && canMutateFiles,
+                            onClick = { overflowExpanded = false; onDeleteSelected() })
+                        DropdownMenuItem(text = { Text("Select all") }, enabled = visibleItemCount > 0,
+                            onClick = { overflowExpanded = false; onSelectAll() })
+                        DropdownMenuItem(text = { Text("Invert selection") }, enabled = visibleItemCount > 0,
+                            onClick = { overflowExpanded = false; onInvertSelection() })
+                        DropdownMenuItem(text = { Text("Deselect all") }, enabled = selectedCount > 0,
+                            onClick = { overflowExpanded = false; onDeselectAll() })
+                    }
+                    if (!selectionMode && clipboardPresent && compactActions) {
                         DropdownMenuItem(
                             text = { Text("Paste") },
                             enabled = canPaste,
                             onClick = {
                                 overflowExpanded = false
                                 onPaste()
-                            }
-                        )
-                    }
-                    if (selectionMode && selectedCount > 0 && canMutateFiles && compactActions) {
-                        DropdownMenuItem(
-                            text = { Text("Delete selected items") },
-                            leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
-                            onClick = {
-                                overflowExpanded = false
-                                onDeleteSelected()
                             }
                         )
                     }

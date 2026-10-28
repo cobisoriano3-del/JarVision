@@ -77,6 +77,33 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
     private val mutableUiState = MutableStateFlow(FilesUiState())
     val uiState: StateFlow<FilesUiState> = mutableUiState.asStateFlow()
 
+    private val mutableSelectedEntryIds = MutableStateFlow<Set<String>>(emptySet())
+    val selectedEntryIds: StateFlow<Set<String>> = mutableSelectedEntryIds.asStateFlow()
+
+    fun toggleEntrySelection(documentId: String) {
+        mutableSelectedEntryIds.value = if (documentId in mutableSelectedEntryIds.value) {
+            mutableSelectedEntryIds.value - documentId
+        } else {
+            mutableSelectedEntryIds.value + documentId
+        }
+    }
+
+    fun selectEntries(documentIds: Collection<String>) {
+        mutableSelectedEntryIds.value = mutableSelectedEntryIds.value + documentIds
+    }
+
+    fun invertSelection(documentIds: Collection<String>) {
+        val updated = mutableSelectedEntryIds.value.toMutableSet()
+        documentIds.forEach { id -> if (!updated.add(id)) updated.remove(id) }
+        mutableSelectedEntryIds.value = updated
+    }
+
+    fun clearSelection() { mutableSelectedEntryIds.value = emptySet() }
+
+    fun setSelectedEntries(documentIds: Collection<String>) {
+        mutableSelectedEntryIds.value = documentIds.toSet()
+    }
+
     private val mutableCetShortcuts = MutableStateFlow(readCetShortcuts())
     val cetShortcuts: StateFlow<List<QuickAccessLocation>> = mutableCetShortcuts.asStateFlow()
     private val mutableCustomFolderIconUris = MutableStateFlow(readCustomFolderIconUris())

@@ -371,51 +371,44 @@ class FileOperationCoordinator(
      * Creates a ZIP in the current writable folder from one selected item. The archive is first
      * streamed into private cache, then published without replacing an existing destination.
      */
+
     fun compressToZip(
-        mode: StorageAccessMode,
-        treeUriString: String?,
-        source: StorageEntry,
-        destinationParentDocumentId: String,
-        destinationParentAbsolutePath: String?,
-        requestedName: String
+        mode: StorageAccessMode, treeUriString: String?, source: StorageEntry,
+        destinationParentDocumentId: String, destinationParentAbsolutePath: String?, requestedName: String
+    ): String = compressEntriesToZip(
+        mode, treeUriString, listOf(source), destinationParentDocumentId, destinationParentAbsolutePath, requestedName
+    )
+
+    /** Creates one ZIP containing every selected entry without modifying any source item. */
+    fun compressEntriesToZip(
+        mode: StorageAccessMode, treeUriString: String?, sources: List<StorageEntry>,
+        destinationParentDocumentId: String, destinationParentAbsolutePath: String?, requestedName: String
     ): String {
         if (mode != StorageAccessMode.SHARED_STORAGE && mode != StorageAccessMode.DOCUMENT_TREE) {
-            throw IOException("Compression is unavailable in read-only Shizuku mode.")
+            throw IOException("Compression is unavailable in this storage mode.")
         }
+        if (sources.isEmpty()) throw IOException("Select at least one item to compress.")
         var outputName = requestedName.trim()
         if (!outputName.lowercase(Locale.ROOT).endsWith(".zip")) outputName += ".zip"
         validateName(outputName)
-        val conflict = findNamedChild(
-            mode, treeUriString, destinationParentDocumentId, destinationParentAbsolutePath, outputName
-        )
-        if (conflict != null) throw IOException("An item with that name already exists.")
-
+        if (findNamedChild(mode, treeUriString, destinationParentDocumentId, destinationParentAbsolutePath, outputName) != null) {
+            throw IOException("An item with that name already exists.")
+        }
         val stagedZip = File(context.cacheDir, "jarvision-compress-" + System.nanoTime() + ".zip")
         try {
             val expanded = longArrayOf(0L)
             val seen = mutableSetOf<String>()
             ZipOutputStream(stagedZip.outputStream().buffered()).use { zip ->
-                addEntryToZip(
-                    zip = zip,
-                    mode = mode,
-                    treeUriString = treeUriString,
-                    entry = source,
-                    archivePath = source.displayName,
-                    seenPaths = seen,
-                    expandedBytes = expanded
-                )
+                sources.forEach { entry ->
+                    addEntryToZip(zip, mode, treeUriString, entry, entry.displayName, seen, expanded)
+                }
             }
-
             when (mode) {
                 StorageAccessMode.SHARED_STORAGE -> {
                     val parent = checkedSharedDirectory(destinationParentAbsolutePath ?: destinationParentDocumentId)
                     val target = safeSharedChildTarget(parent, outputName)
-                    if (target.exists() || Files.isSymbolicLink(target.toPath())) {
-                        throw IOException("An item with that name already exists.")
-                    }
-                    val temporary = safeSharedChildTarget(
-                        parent, ".jarvision-stage-" + System.nanoTime() + ".zip"
-                    )
+                    if (target.exists() || Files.isSymbolicLink(target.toPath())) throw IOException("An item with that name already exists.")
+                    val temporary = safeSharedChildTarget(parent, ".jarvision-stage-" + System.nanoTime() + ".zip")
                     try {
                         copyFileTree(stagedZip, temporary)
                         Files.move(temporary.toPath(), target.toPath())
@@ -427,9 +420,8 @@ class FileOperationCoordinator(
                 StorageAccessMode.DOCUMENT_TREE -> {
                     val treeUri = parseTreeUri(treeUriString)
                     requireWriteGrant(treeUri)
-                    val parentUri = documentUri(treeUri, destinationParentDocumentId)
                     val targetUri = DocumentsContract.createDocument(
-                        resolver, parentUri, "application/zip", outputName
+                        resolver, documentUri(treeUri, destinationParentDocumentId), "application/zip", outputName
                     ) ?: throw IOException("The storage provider couldn't create the ZIP file.")
                     try {
                         val actual = saf.getDocument(treeUri, DocumentsContract.getDocumentId(targetUri))
@@ -447,7 +439,7 @@ class FileOperationCoordinator(
                         throw error
                     }
                 }
-                else -> throw IOException("Compression is unavailable in read-only Shizuku mode.")
+                else -> throw IOException("Compression is unavailable in this storage mode.")
             }
             return outputName
         } finally {
