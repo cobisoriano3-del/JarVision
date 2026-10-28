@@ -1466,7 +1466,7 @@ private fun buildQuickAccessLocations(
                     }
                 }
                 QuickAccessLocation(
-                    id = "builtin:\${state.accessMode.name}:$current",
+                    id = "builtin:${state.accessMode.name}:$current",
                     label = label,
                     accessMode = state.accessMode,
                     treeUriString = state.treeUriString,
@@ -1477,7 +1477,7 @@ private fun buildQuickAccessLocations(
         }
         StorageAccessMode.DOCUMENT_TREE -> listOf(
             QuickAccessLocation(
-                id = "builtin:tree-root:\${state.treeUriString.orEmpty()}",
+                id = "builtin:tree-root:${state.treeUriString.orEmpty()}",
                 label = "Selected folder",
                 accessMode = state.accessMode,
                 treeUriString = state.treeUriString,
