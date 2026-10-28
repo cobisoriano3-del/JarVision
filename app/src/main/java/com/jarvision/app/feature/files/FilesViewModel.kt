@@ -21,6 +21,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 
 enum class StorageAccessMode {
@@ -51,6 +53,8 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
     private val safGateway = SafStorageGateway(application.contentResolver)
     private val sharedStorageGateway = SharedStorageGateway()
     private val shizukuStorageAdapter = ShizukuStorageAdapter.get(application)
+    private val entryVisualLoader = EntryVisualLoader(application)
+    private val entryVisualLoadSemaphore = Semaphore(3)
 
     private val mutableUiState = MutableStateFlow(FilesUiState())
     val uiState: StateFlow<FilesUiState> = mutableUiState.asStateFlow()
@@ -193,6 +197,11 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
             loadChildren(state.accessMode, state.treeUriString, location)
         }
     }
+
+    suspend fun loadEntryVisual(entry: StorageEntry, state: FilesUiState): EntryVisual =
+        withContext(Dispatchers.IO) {
+            entryVisualLoadSemaphore.withPermit { entryVisualLoader.load(entry, state) }
+        }
 
     private fun hasSharedStorageAccess(): Boolean {
         val application = getApplication<Application>()
@@ -378,6 +387,11 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
             "Android denied access to this location. Grant storage access or choose a folder again."
         else ->
             "Couldn't read this location. It may have moved, or its storage provider may be unavailable."
+    }
+
+    override fun onCleared() {
+        entryVisualLoader.clear()
+        super.onCleared()
     }
 
     private companion object {

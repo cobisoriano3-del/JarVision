@@ -1938,6 +1938,7 @@ private fun BrowserState(
                         GridFileEntry(
                             entry = entry,
                             state = state,
+                            filesViewModel = filesViewModel,
                             selected = entry.documentId in selectedEntryIds,
                             selectionMode = selectionMode,
                             onClick = { onOpenEntry(entry) },
@@ -1968,6 +1969,7 @@ private fun BrowserState(
                         FileEntryRow(
                             entry = entry,
                             state = state,
+                            filesViewModel = filesViewModel,
                             viewMode = viewMode,
                             selected = entry.documentId in selectedEntryIds,
                             selectionMode = selectionMode,
@@ -2035,7 +2037,7 @@ private fun ParentFolderRow(onClick: () -> Unit) {
 }
 
 @Composable
-private fun FolderThumbnail(entry: StorageEntry, state: FilesUiState, thumbnailSize: Dp = 48.dp) {
+internal fun FolderThumbnail(entry: StorageEntry, state: FilesUiState, thumbnailSize: Dp = 48.dp) {
     val context = LocalContext.current
     val thumbnailModel by produceState<Any?>(
         initialValue = null,
@@ -2101,6 +2103,7 @@ private fun fallbackFolderImage(folderName: String): ImageVector {
 private fun FileEntryRow(
     entry: StorageEntry,
     state: FilesUiState,
+    filesViewModel: FilesViewModel,
     viewMode: BrowserViewMode,
     selected: Boolean,
     selectionMode: Boolean,
@@ -2129,16 +2132,12 @@ private fun FileEntryRow(
             ),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            if (entry.isDirectory) {
-                FolderThumbnail(entry = entry, state = state, thumbnailSize = thumbnailSize)
-            } else {
-                Icon(
-                    imageVector = Icons.Filled.InsertDriveFile,
-                    contentDescription = "File",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(thumbnailSize)
-                )
-            }
+            FileEntryVisualIcon(
+                entry = entry,
+                state = state,
+                filesViewModel = filesViewModel,
+                thumbnailSize = thumbnailSize
+            )
             Spacer(Modifier.size(if (compact) 10.dp else 12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -2189,6 +2188,7 @@ private fun FileEntryRow(
 private fun GridFileEntry(
     entry: StorageEntry,
     state: FilesUiState,
+    filesViewModel: FilesViewModel,
     selected: Boolean,
     selectionMode: Boolean,
     onClick: () -> Unit,
@@ -2208,16 +2208,12 @@ private fun GridFileEntry(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            if (entry.isDirectory) {
-                FolderThumbnail(entry = entry, state = state, thumbnailSize = 48.dp)
-            } else {
-                Icon(
-                    Icons.Filled.InsertDriveFile,
-                    contentDescription = "File",
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(48.dp)
-                )
-            }
+            FileEntryVisualIcon(
+                entry = entry,
+                state = state,
+                filesViewModel = filesViewModel,
+                thumbnailSize = 48.dp
+            )
             Spacer(Modifier.height(4.dp))
             Text(
                 text = entry.displayName,
