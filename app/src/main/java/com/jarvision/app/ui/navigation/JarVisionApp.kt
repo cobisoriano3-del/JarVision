@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.navigationBarsIgnoringVisibility
 import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -76,6 +77,7 @@ private data class MainTab(
     val icon: ImageVector
 )
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun JarVisionApp() {
     val context = LocalContext.current

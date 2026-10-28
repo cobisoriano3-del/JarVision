@@ -32,6 +32,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -161,7 +162,7 @@ private enum class BrowserViewMode { COMPACT, DETAILED, GRID }
 private enum class BrowserSortOrder { NAME, SIZE, DATE, TYPE }
 private enum class CreateItemKind { FOLDER, FILE, ZIP }
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun FilesScreen(
     filesViewModel: FilesViewModel = viewModel(),
