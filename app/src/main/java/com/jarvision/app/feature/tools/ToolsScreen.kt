@@ -159,7 +159,7 @@ private fun ToolIcon(icon: ImageVector, size: androidx.compose.ui.unit.Dp) {
         border = BorderStroke(1.dp, Color(0xFF1A5A96))
     ) {
         Box(
-            modifier = Modifier.background(Brush.verticalGradient(listOf(Color(0xFF104982), Color(0xFF06284D))),
+            modifier = Modifier.background(Brush.verticalGradient(listOf(Color(0xFF104982), Color(0xFF06284D)))),
             contentAlignment = Alignment.Center
         ) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(if (size < 50.dp) 24.dp else 27.dp), tint = Color(0xFFD7EBFF))
