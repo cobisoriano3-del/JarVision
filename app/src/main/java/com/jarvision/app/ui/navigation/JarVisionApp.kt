@@ -279,6 +279,7 @@ fun JarVisionApp() {
         ) {
             composable(Routes.FILES) {
                 FilesScreen(
+                    isActive = currentRoute == Routes.FILES,
                     onOpenSettings = {
                         navController.navigate(Routes.SETTINGS) { launchSingleTop = true }
                     }

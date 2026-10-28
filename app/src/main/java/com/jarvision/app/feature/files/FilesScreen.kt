@@ -167,7 +167,8 @@ private enum class CreateItemKind { FOLDER, FILE, ZIP }
 @Composable
 fun FilesScreen(
     filesViewModel: FilesViewModel = viewModel(),
-    onOpenSettings: () -> Unit = {}
+    onOpenSettings: () -> Unit = {},
+    isActive: Boolean = true
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -224,6 +225,17 @@ fun FilesScreen(
             }
         } == true
         else -> false
+    }
+
+    // Collapse the speed dial when its directory, storage context, or tab changes.
+    LaunchedEffect(
+        isActive,
+        state.accessMode,
+        state.treeUriString,
+        state.currentPath,
+        canMutateFiles
+    ) {
+        fabExpanded = false
     }
 
     val visibleEntries = remember(
@@ -974,10 +986,7 @@ fun FilesScreen(
                         onGrantWriteAccess = ::chooseFolder,
                         onOpenShizuku = ::openShizukuBrowser,
                         onOpenSettings = onOpenSettings,
-                        onAbout = { aboutDialogVisible = true },
-                        onCreateFolder = { beginCreate(CreateItemKind.FOLDER) },
-                        onCreateFile = { beginCreate(CreateItemKind.FILE) },
-                        onCreateArchive = { beginCreate(CreateItemKind.ZIP) }
+                        onAbout = { aboutDialogVisible = true }
                     )
                     BrowserState(
                         modifier = Modifier.weight(1f),
@@ -1005,20 +1014,25 @@ fun FilesScreen(
             }
         }
 
-        if (canMutateFiles && state.currentPath.isNotEmpty()) {
+        if (state.currentPath.isNotEmpty()) {
             Column(
-                modifier = Modifier.align(Alignment.BottomEnd).padding(end = 14.dp, bottom = 14.dp),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 14.dp, bottom = 14.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (fabExpanded) {
+                if (fabExpanded && canMutateFiles) {
                     FloatingActionButton(
                         onClick = { beginCreate(CreateItemKind.FOLDER) },
                         modifier = Modifier.size(48.dp),
                         containerColor = Color(0xFF2492F4),
                         contentColor = Color.White
                     ) {
-                        Icon(Icons.Filled.CreateNewFolder, contentDescription = "Create folder")
+                        Icon(
+                            Icons.Filled.CreateNewFolder,
+                            contentDescription = "Create folder"
+                        )
                     }
                     FloatingActionButton(
                         onClick = { beginCreate(CreateItemKind.ZIP) },
@@ -1026,7 +1040,10 @@ fun FilesScreen(
                         containerColor = Color(0xFF2492F4),
                         contentColor = Color.White
                     ) {
-                        Icon(Icons.Filled.Archive, contentDescription = "Create ZIP archive")
+                        Icon(
+                            Icons.Filled.Archive,
+                            contentDescription = "Create ZIP archive"
+                        )
                     }
                     FloatingActionButton(
                         onClick = { beginCreate(CreateItemKind.FILE) },
@@ -1034,11 +1051,20 @@ fun FilesScreen(
                         containerColor = Color(0xFF2492F4),
                         contentColor = Color.White
                     ) {
-                        Icon(Icons.Filled.Description, contentDescription = "Create file")
+                        Icon(
+                            Icons.Filled.Description,
+                            contentDescription = "Create text file"
+                        )
                     }
                 }
                 FloatingActionButton(
-                    onClick = { fabExpanded = !fabExpanded },
+                    onClick = {
+                        if (canMutateFiles) {
+                            fabExpanded = !fabExpanded
+                        } else {
+                            showMessage("Choose a writable storage location to create items.")
+                        }
+                    },
                     modifier = Modifier.size(56.dp),
                     containerColor = Color(0xFF2492F4),
                     contentColor = Color.White
@@ -1536,16 +1562,12 @@ private fun FileBrowserToolbar(
     onOpenShizuku: () -> Unit,
     onOpenSettings: () -> Unit,
     onAbout: () -> Unit,
-    onCreateFolder: () -> Unit,
-    onCreateFile: () -> Unit,
-    onCreateArchive: () -> Unit,
     onSaveCurrentFolderAsCet: () -> Unit
 ) {
     var pathMenuExpanded by remember { mutableStateOf(false) }
     var viewMenuExpanded by remember { mutableStateOf(false) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
     var overflowExpanded by remember { mutableStateOf(false) }
-    var createMenuExpanded by remember { mutableStateOf(false) }
 
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         val compactActions = maxWidth < 380.dp
@@ -1905,14 +1927,6 @@ private fun FileBrowserToolbar(
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("Create  ›") },
-                        enabled = canMutateFiles,
-                        onClick = {
-                            overflowExpanded = false
-                            createMenuExpanded = true
-                        }
-                    )
-                    DropdownMenuItem(
                         text = { Text("CET · Save current folder") },
                         leadingIcon = { Icon(Icons.Filled.FolderOpen, contentDescription = null) },
                         onClick = {
@@ -1948,40 +1962,6 @@ private fun FileBrowserToolbar(
                         onClick = {
                             overflowExpanded = false
                             onAbout()
-                        }
-                    )
-                }
-                DropdownMenu(
-                    expanded = createMenuExpanded,
-                    onDismissRequest = { createMenuExpanded = false },
-                    shape = RoundedCornerShape(18.dp),
-                    containerColor = Color(0xFF10345D),
-                    tonalElevation = 0.dp,
-                    shadowElevation = 16.dp,
-                    border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Folder") },
-                        leadingIcon = { Icon(Icons.Filled.CreateNewFolder, contentDescription = null) },
-                        onClick = {
-                            createMenuExpanded = false
-                            onCreateFolder()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("File") },
-                        leadingIcon = { Icon(Icons.Filled.Description, contentDescription = null) },
-                        onClick = {
-                            createMenuExpanded = false
-                            onCreateFile()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("ZIP archive") },
-                        leadingIcon = { Icon(Icons.Filled.Archive, contentDescription = null) },
-                        onClick = {
-                            createMenuExpanded = false
-                            onCreateArchive()
                         }
                     )
                 }
