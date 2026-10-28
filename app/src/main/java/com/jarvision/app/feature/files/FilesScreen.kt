@@ -72,6 +72,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Folder
@@ -171,6 +172,8 @@ fun FilesScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val state by filesViewModel.uiState.collectAsState()
+    val cetShortcuts by filesViewModel.cetShortcuts.collectAsState()
+    val customFolderIconUris by filesViewModel.customFolderIconUris.collectAsState()
     val uiPreferences = remember(context) {
         context.getSharedPreferences("jarvision_file_ui", android.content.Context.MODE_PRIVATE)
     }
@@ -260,6 +263,7 @@ fun FilesScreen(
     var shouldOpenShizukuAfterConnect by remember { mutableStateOf(false) }
     var previewContent by remember { mutableStateOf<Pair<String, String>?>(null) }
     var selectedEntry by remember { mutableStateOf<StorageEntry?>(null) }
+    var folderIconTarget by remember { mutableStateOf<Pair<StorageEntry, FilesUiState>?>(null) }
     var informationEntry by remember { mutableStateOf<StorageEntry?>(null) }
     var renameEntry by remember { mutableStateOf<StorageEntry?>(null) }
     var renameName by remember { mutableStateOf("") }
@@ -274,6 +278,24 @@ fun FilesScreen(
     ) { uri: Uri? ->
         if (uri != null) filesViewModel.selectTree(uri)
     }
+    val folderIconPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        val target = folderIconTarget
+        folderIconTarget = null
+        if (uri != null && target != null) {
+            val permissionSaved = runCatching {
+                context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }.isSuccess
+            if (permissionSaved) {
+                filesViewModel.setCustomFolderIcon(target.first, target.second, uri)
+                coroutineScope.launch { snackbarHostState.showSnackbar("Custom folder image saved.") }
+            } else {
+                coroutineScope.launch { snackbarHostState.showSnackbar("Android did not grant persistent access to that image. Choose another image provider.") }
+            }
+        }
+    }
+
     val settingsLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.StartActivityForResult()
     ) {
@@ -893,6 +915,15 @@ fun FilesScreen(
                     FileBrowserToolbar(
                         title = if (multiSelectMode) "${selectedEntryIds.size} selected" else currentLocation.displayName,
                         path = if (multiSelectMode) "Tap items to select or deselect" else pathText,
+                        quickAccessLocations = buildQuickAccessLocations(state, cetShortcuts),
+                        onSelectQuickAccess = filesViewModel::navigateToQuickAccess,
+                        onRemoveCetShortcut = filesViewModel::removeCetShortcut,
+                        onSaveCurrentFolderAsCet = {
+                            val added = filesViewModel.saveCurrentFolderAsCet()
+                            coroutineScope.launch {
+                                snackbarHostState.showSnackbar(if (added) "Saved to CET quick access." else "This folder is already in CET.")
+                            }
+                        },
                         searchExpanded = searchExpanded,
                         searchQuery = searchQuery,
                         onSearchQueryChange = { searchQuery = it },
@@ -952,12 +983,12 @@ fun FilesScreen(
                         modifier = Modifier.weight(1f),
                         state = state,
                         filesViewModel = filesViewModel,
+                        customFolderIconUris = customFolderIconUris,
                         onChooseFolder = ::chooseFolder,
                         entries = visibleEntries,
                         viewMode = viewMode,
                         selectedEntryIds = selectedEntryIds,
                         selectionMode = multiSelectMode,
-                        onNavigateBack = filesViewModel::navigateBack,
                         onOpenEntry = { entry ->
                             if (multiSelectMode) toggleSelectedEntry(entry)
                             else if (entry.isDirectory) filesViewModel.navigateInto(entry)
@@ -1051,6 +1082,19 @@ fun FilesScreen(
                     ContextActionRow("Open / View", Icons.Filled.FolderOpen) {
                         selectedEntry = null
                         if (entry.isDirectory) filesViewModel.navigateInto(entry) else openFile(entry)
+                    }
+                    if (entry.isDirectory) {
+                        ContextActionRow("Set custom folder image", Icons.Filled.Image) {
+                            folderIconTarget = entry to state
+                            selectedEntry = null
+                            folderIconPicker.launch(arrayOf("image/*"))
+                        }
+                        if (customFolderIconUris.containsKey(folderIconKey(state, entry))) {
+                            ContextActionRow("Reset custom folder image", Icons.Filled.Close) {
+                                filesViewModel.setCustomFolderIcon(entry, state, null)
+                                selectedEntry = null
+                            }
+                        }
                     }
                     ContextActionRow("Information", Icons.Filled.Info) {
                         selectedEntry = null
@@ -1395,10 +1439,75 @@ private fun StorageAccessRequiredState(
     }
 }
 
+private fun buildQuickAccessLocations(
+    state: FilesUiState,
+    cetShortcuts: List<QuickAccessLocation>
+): List<QuickAccessLocation> {
+    val root = state.currentPath.firstOrNull() ?: return cetShortcuts
+    val builtIns = when (state.accessMode) {
+        StorageAccessMode.SHARED_STORAGE, StorageAccessMode.SHIZUKU_STORAGE -> {
+            val rootPath = (root.absolutePath ?: root.documentId).trimEnd('/')
+            val defaults = listOf(
+                "" to "Device storage",
+                "Download" to "Download",
+                "Music" to "Music",
+                "DCIM" to "DCIM",
+                "Pictures" to "Pictures",
+                "Movies" to "Movies",
+                "Documents" to "Documents"
+            )
+            defaults.map { (relative, label) ->
+                val chain = mutableListOf(root)
+                var current = rootPath
+                if (relative.isNotBlank()) {
+                    relative.split('/').forEach { part ->
+                        current = "$current/$part"
+                        chain += FolderLocation(documentId = current, displayName = part, absolutePath = current)
+                    }
+                }
+                QuickAccessLocation(
+                    id = "builtin:\${state.accessMode.name}:$current",
+                    label = label,
+                    accessMode = state.accessMode,
+                    treeUriString = state.treeUriString,
+                    path = chain,
+                    isCustom = false
+                )
+            }
+        }
+        StorageAccessMode.DOCUMENT_TREE -> listOf(
+            QuickAccessLocation(
+                id = "builtin:tree-root:\${state.treeUriString.orEmpty()}",
+                label = "Selected folder",
+                accessMode = state.accessMode,
+                treeUriString = state.treeUriString,
+                path = listOf(root),
+                isCustom = false
+            )
+        )
+        StorageAccessMode.NONE -> emptyList()
+    }
+    return builtIns + cetShortcuts
+}
+
+private fun quickAccessIcon(label: String): ImageVector = when (label.lowercase(Locale.ROOT)) {
+    "device storage", "selected folder", "internal storage" -> Icons.Filled.FolderOpen
+    "download", "downloads" -> Icons.Filled.Download
+    "music", "alarms", "notifications", "ringtones", "podcasts" -> Icons.Filled.MusicNote
+    "dcim" -> Icons.Filled.CameraAlt
+    "pictures", "photos", "screenshots" -> Icons.Filled.Image
+    "movies", "videos" -> Icons.Filled.Movie
+    "documents" -> Icons.Filled.Description
+    else -> Icons.Filled.Folder
+}
+
 @Composable
 private fun FileBrowserToolbar(
     title: String,
     path: String,
+    quickAccessLocations: List<QuickAccessLocation>,
+    onSelectQuickAccess: (QuickAccessLocation) -> Unit,
+    onRemoveCetShortcut: (String) -> Unit,
     searchExpanded: Boolean,
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
@@ -1429,8 +1538,10 @@ private fun FileBrowserToolbar(
     onAbout: () -> Unit,
     onCreateFolder: () -> Unit,
     onCreateFile: () -> Unit,
-    onCreateArchive: () -> Unit
+    onCreateArchive: () -> Unit,
+    onSaveCurrentFolderAsCet: () -> Unit
 ) {
+    var pathMenuExpanded by remember { mutableStateOf(false) }
     var viewMenuExpanded by remember { mutableStateOf(false) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
     var overflowExpanded by remember { mutableStateOf(false) }
@@ -1489,13 +1600,43 @@ private fun FileBrowserToolbar(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    Text(
-                        text = path,
-                        color = Color.White.copy(alpha = 0.76f),
-                        style = MaterialTheme.typography.bodySmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Box {
+                        Text(
+                            text = path,
+                            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { pathMenuExpanded = true },
+                            color = Color.White.copy(alpha = 0.76f),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        DropdownMenu(
+                            expanded = pathMenuExpanded,
+                            onDismissRequest = { pathMenuExpanded = false },
+                            shape = RoundedCornerShape(18.dp),
+                            containerColor = Color(0xFF10345D),
+                            tonalElevation = 0.dp,
+                            shadowElevation = 16.dp,
+                            border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
+                        ) {
+                            quickAccessLocations.forEach { location ->
+                                DropdownMenuItem(
+                                    text = { Text(location.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                                    leadingIcon = { Icon(quickAccessIcon(location.label), contentDescription = null) },
+                                    trailingIcon = {
+                                        if (location.isCustom) {
+                                            IconButton(onClick = { onRemoveCetShortcut(location.id) }) {
+                                                Icon(Icons.Filled.Close, contentDescription = "Remove CET shortcut")
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        pathMenuExpanded = false
+                                        onSelectQuickAccess(location)
+                                    }
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1771,6 +1912,14 @@ private fun FileBrowserToolbar(
                             createMenuExpanded = true
                         }
                     )
+                    DropdownMenuItem(
+                        text = { Text("CET · Save current folder") },
+                        leadingIcon = { Icon(Icons.Filled.FolderOpen, contentDescription = null) },
+                        onClick = {
+                            overflowExpanded = false
+                            onSaveCurrentFolderAsCet()
+                        }
+                    )
                     if (needsSafWriteGrant) {
                         DropdownMenuItem(
                             text = { Text("Grant write access") },
@@ -1846,12 +1995,12 @@ private fun BrowserState(
     modifier: Modifier = Modifier,
     state: FilesUiState,
     filesViewModel: FilesViewModel,
+    customFolderIconUris: Map<String, String>,
     onChooseFolder: () -> Unit,
     entries: List<StorageEntry>,
     viewMode: BrowserViewMode,
     selectedEntryIds: Set<String>,
     selectionMode: Boolean,
-    onNavigateBack: () -> Unit,
     onOpenEntry: (StorageEntry) -> Unit,
     onLongPressEntry: (StorageEntry) -> Unit,
     onRetry: () -> Unit,
@@ -1931,16 +2080,12 @@ private fun BrowserState(
                     horizontalArrangement = Arrangement.spacedBy(5.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    if (state.currentPath.size > 1) {
-                        item(key = "__jarvision_parent_folder__") {
-                            ParentFolderGridTile(onClick = onNavigateBack)
-                        }
-                    }
                     gridItems(entries, key = { it.documentId }) { entry ->
                         GridFileEntry(
                             entry = entry,
                             state = state,
                             filesViewModel = filesViewModel,
+                            customFolderIconUris = customFolderIconUris,
                             selected = entry.documentId in selectedEntryIds,
                             selectionMode = selectionMode,
                             onClick = { onOpenEntry(entry) },
@@ -1962,16 +2107,12 @@ private fun BrowserState(
                     contentPadding = PaddingValues(bottom = 76.dp, top = 2.dp),
                     verticalArrangement = Arrangement.spacedBy(if (viewMode == BrowserViewMode.COMPACT) 3.dp else 5.dp)
                 ) {
-                    if (state.currentPath.size > 1) {
-                        item(key = "__jarvision_parent_folder__") {
-                            ParentFolderRow(onClick = onNavigateBack)
-                        }
-                    }
                     items(entries, key = { it.documentId }) { entry ->
                         FileEntryRow(
                             entry = entry,
                             state = state,
                             filesViewModel = filesViewModel,
+                            customFolderIconUris = customFolderIconUris,
                             viewMode = viewMode,
                             selected = entry.documentId in selectedEntryIds,
                             selectionMode = selectionMode,
@@ -1992,64 +2133,16 @@ private fun BrowserState(
 }
 
 @Composable
-private fun ParentFolderGridTile(onClick: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(10.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 10.dp).fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Icon(Icons.Filled.ArrowBack, contentDescription = "Parent folder", tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(38.dp))
-            Spacer(Modifier.height(4.dp))
-            Text("Parent", maxLines = 1, style = MaterialTheme.typography.labelSmall)
-        }
-    }
-}
-
-@Composable
-private fun ParentFolderRow(onClick: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        shape = RoundedCornerShape(9.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.28f)
-        )
-    ) {
-        Row(
-            Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                Icons.Filled.ArrowBack,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(22.dp)
-            )
-            Spacer(Modifier.size(10.dp))
-            Text(
-                "Parent folder",
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium
-            )
-        }
-    }
-}
-
-@Composable
-internal fun FolderThumbnail(entry: StorageEntry, state: FilesUiState, thumbnailSize: Dp = 48.dp) {
+internal fun FolderThumbnail(entry: StorageEntry, state: FilesUiState, thumbnailSize: Dp = 48.dp, customThumbnailUri: String? = null) {
     val context = LocalContext.current
     val thumbnailModel by produceState<Any?>(
         initialValue = null,
-        key1 = entry.documentId,
-        key2 = state.accessMode,
-        key3 = state.treeUriString
+        key1 = listOf(entry.documentId, state.accessMode.name, state.treeUriString.orEmpty(), customThumbnailUri.orEmpty()).joinToString("|")
     ) {
         value = withContext(Dispatchers.IO) {
             runCatching {
-                when (state.accessMode) {
+                if (!customThumbnailUri.isNullOrBlank()) Uri.parse(customThumbnailUri)
+                else when (state.accessMode) {
                     StorageAccessMode.SHARED_STORAGE -> entry.absolutePath?.let {
                         SharedStorageGateway().findFolderThumbnailFile(it)
                     }
@@ -2081,21 +2174,24 @@ internal fun FolderThumbnail(entry: StorageEntry, state: FilesUiState, thumbnail
                 onError = { imageFailed = true }
             )
         } else {
-            Icon(imageVector = fallbackFolderImage(entry.displayName), contentDescription = "Folder",
+            Icon(imageVector = fallbackFolderImage(entry.displayName, entry.absolutePath), contentDescription = "Folder",
                 tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(if (thumbnailSize <= 36.dp) 20.dp else 28.dp))
         }
     }
 }
 
-private fun fallbackFolderImage(folderName: String): ImageVector {
-    val name = folderName.lowercase(Locale.ROOT)
+private fun fallbackFolderImage(folderName: String, absolutePath: String? = null): ImageVector {
+    val name = folderName.trim().lowercase(Locale.ROOT)
+    val path = absolutePath.orEmpty().replace('\\', '/').lowercase(Locale.ROOT)
     return when {
-        "android" in name || name == "data" || name == "obb" -> Icons.Filled.Android
-        "picture" in name || "image" in name || "dcim" in name -> Icons.Filled.Image
-        "download" in name -> Icons.Filled.Download
-        "music" in name || "audio" in name -> Icons.Filled.MusicNote
-        "movie" in name || "video" in name -> Icons.Filled.Movie
-        "archive" in name || name.endsWith(".zip") || name.endsWith(".7z") -> Icons.Filled.Archive
+        name == "dcim" || path.endsWith("/dcim") -> Icons.Filled.CameraAlt
+        "download" in name || name == "downloads" -> Icons.Filled.Download
+        name == "music" || name == "podcasts" || name == "ringtones" || name == "alarms" || name == "notifications" -> Icons.Filled.MusicNote
+        name == "movies" || name == "videos" || name == "video" -> Icons.Filled.Movie
+        name == "pictures" || name == "photos" || name == "screenshots" || name == "wallpapers" || name == "images" -> Icons.Filled.Image
+        name == "documents" || name == "document" || name == "books" -> Icons.Filled.Description
+        name == "android" || name == "data" || name == "obb" -> Icons.Filled.Android
+        name.endsWith(".zip") || name.endsWith(".7z") || name == "archives" -> Icons.Filled.Archive
         else -> Icons.Filled.Folder
     }
 }
@@ -2106,6 +2202,7 @@ private fun FileEntryRow(
     entry: StorageEntry,
     state: FilesUiState,
     filesViewModel: FilesViewModel,
+    customFolderIconUris: Map<String, String>,
     viewMode: BrowserViewMode,
     selected: Boolean,
     selectionMode: Boolean,
@@ -2138,6 +2235,7 @@ private fun FileEntryRow(
                 entry = entry,
                 state = state,
                 filesViewModel = filesViewModel,
+                customFolderIconUris = customFolderIconUris,
                 thumbnailSize = thumbnailSize
             )
             Spacer(Modifier.size(if (compact) 10.dp else 12.dp))
@@ -2191,6 +2289,7 @@ private fun GridFileEntry(
     entry: StorageEntry,
     state: FilesUiState,
     filesViewModel: FilesViewModel,
+    customFolderIconUris: Map<String, String>,
     selected: Boolean,
     selectionMode: Boolean,
     onClick: () -> Unit,
@@ -2214,6 +2313,7 @@ private fun GridFileEntry(
                 entry = entry,
                 state = state,
                 filesViewModel = filesViewModel,
+                customFolderIconUris = customFolderIconUris,
                 thumbnailSize = 48.dp
             )
             Spacer(Modifier.height(4.dp))

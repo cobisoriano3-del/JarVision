@@ -42,10 +42,12 @@ internal fun FileEntryVisualIcon(
     entry: com.jarvision.app.data.storage.StorageEntry,
     state: FilesUiState,
     filesViewModel: FilesViewModel,
+    customFolderIconUris: Map<String, String>,
     thumbnailSize: Dp
 ) {
-    if (entry.isDirectory && !isAndroidDataPackageFolder(entry, state)) {
-        FolderThumbnail(entry = entry, state = state, thumbnailSize = thumbnailSize)
+    val customFolderUri = customFolderIconUris[folderIconKey(state, entry)]
+    if (entry.isDirectory && (!isAndroidDataPackageFolder(entry, state) || customFolderUri != null)) {
+        FolderThumbnail(entry = entry, state = state, thumbnailSize = thumbnailSize, customThumbnailUri = customFolderUri)
         return
     }
     val initialKind = defaultEntryVisualKind(entry, state)

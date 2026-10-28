@@ -24,6 +24,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.UUID
 
 enum class StorageAccessMode {
     NONE,
@@ -47,6 +50,21 @@ data class FilesUiState(
     val errorMessage: String? = null
 )
 
+data class QuickAccessLocation(
+    val id: String,
+    val label: String,
+    val accessMode: StorageAccessMode,
+    val treeUriString: String?,
+    val path: List<FolderLocation>,
+    val isCustom: Boolean = false
+)
+
+internal fun folderIconKey(state: FilesUiState, entry: StorageEntry): String = listOf(
+    state.accessMode.name,
+    state.treeUriString.orEmpty(),
+    entry.absolutePath ?: entry.documentId
+).joinToString("|")
+
 class FilesViewModel(application: Application) : AndroidViewModel(application) {
 
     private val preferences = application.getSharedPreferences(PREFERENCES_NAME, 0)
@@ -58,6 +76,11 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
 
     private val mutableUiState = MutableStateFlow(FilesUiState())
     val uiState: StateFlow<FilesUiState> = mutableUiState.asStateFlow()
+
+    private val mutableCetShortcuts = MutableStateFlow(readCetShortcuts())
+    val cetShortcuts: StateFlow<List<QuickAccessLocation>> = mutableCetShortcuts.asStateFlow()
+    private val mutableCustomFolderIconUris = MutableStateFlow(readCustomFolderIconUris())
+    val customFolderIconUris: StateFlow<Map<String, String>> = mutableCustomFolderIconUris.asStateFlow()
 
     private var operationJob: Job? = null
 
@@ -389,6 +412,134 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
             "Couldn't read this location. It may have moved, or its storage provider may be unavailable."
     }
 
+    fun saveCurrentFolderAsCet(): Boolean {
+        val state = mutableUiState.value
+        val current = state.currentPath.lastOrNull() ?: return false
+        if (state.accessMode == StorageAccessMode.NONE) return false
+        if (mutableCetShortcuts.value.any {
+                it.accessMode == state.accessMode &&
+                    it.treeUriString == state.treeUriString &&
+                    it.path.lastOrNull()?.documentId == current.documentId
+            }) return false
+        val updated = mutableCetShortcuts.value + QuickAccessLocation(
+            id = UUID.randomUUID().toString(),
+            label = current.displayName.ifBlank { "Custom folder" },
+            accessMode = state.accessMode,
+            treeUriString = state.treeUriString,
+            path = state.currentPath.toList(),
+            isCustom = true
+        )
+        mutableCetShortcuts.value = updated
+        writeCetShortcuts(updated)
+        return true
+    }
+
+    fun removeCetShortcut(id: String) {
+        val updated = mutableCetShortcuts.value.filterNot { it.id == id }
+        mutableCetShortcuts.value = updated
+        writeCetShortcuts(updated)
+    }
+
+    fun navigateToQuickAccess(shortcut: QuickAccessLocation) {
+        val target = shortcut.path.lastOrNull() ?: return
+        when (shortcut.accessMode) {
+            StorageAccessMode.SHARED_STORAGE -> if (!hasSharedStorageAccess()) {
+                mutableUiState.value = mutableUiState.value.copy(errorMessage = "Shared-storage access is unavailable. Grant storage access and try again.")
+                return
+            }
+            StorageAccessMode.SHIZUKU_STORAGE -> if (!shizukuStorageAdapter.status.value.isConnected) {
+                mutableUiState.value = mutableUiState.value.copy(errorMessage = "Connect to Shizuku before opening this shortcut.")
+                return
+            }
+            StorageAccessMode.DOCUMENT_TREE -> if (!hasPersistedTreeGrant(shortcut.treeUriString)) {
+                mutableUiState.value = mutableUiState.value.copy(errorMessage = "The folder permission for this shortcut has expired. Choose the folder again.")
+                return
+            }
+            StorageAccessMode.NONE -> return
+        }
+        operationJob?.cancel()
+        mutableUiState.value = mutableUiState.value.copy(
+            accessMode = shortcut.accessMode, treeUriString = shortcut.treeUriString,
+            currentPath = shortcut.path, entries = emptyList(), isLoading = true, errorMessage = null
+        )
+        operationJob = viewModelScope.launch { loadChildren(shortcut.accessMode, shortcut.treeUriString, target) }
+    }
+
+    fun setCustomFolderIcon(entry: StorageEntry, state: FilesUiState, uri: Uri?) {
+        if (!entry.isDirectory) return
+        val key = folderIconKey(state, entry)
+        val updated = if (uri == null) mutableCustomFolderIconUris.value - key else mutableCustomFolderIconUris.value + (key to uri.toString())
+        mutableCustomFolderIconUris.value = updated
+        val json = JSONObject()
+        updated.forEach { (folderKey, value) -> json.put(folderKey, value) }
+        preferences.edit().putString(KEY_CUSTOM_FOLDER_ICONS, json.toString()).apply()
+    }
+
+    private fun readCetShortcuts(): List<QuickAccessLocation> {
+        val raw = preferences.getString(KEY_CET_SHORTCUTS, null) ?: return emptyList()
+        return runCatching {
+            val array = JSONArray(raw)
+            buildList {
+                for (i in 0 until array.length()) {
+                    val item = array.optJSONObject(i) ?: continue
+                    val mode = runCatching { StorageAccessMode.valueOf(item.optString("accessMode")) }.getOrNull() ?: continue
+                    if (mode == StorageAccessMode.NONE) continue
+                    val savedPath = item.optJSONArray("path") ?: continue
+                    val path = buildList {
+                        for (p in 0 until savedPath.length()) {
+                            val folder = savedPath.optJSONObject(p) ?: continue
+                            val documentId = folder.optString("documentId")
+                            if (documentId.isBlank()) continue
+                            add(FolderLocation(
+                                documentId = documentId,
+                                displayName = folder.optString("displayName").ifBlank { documentId },
+                                absolutePath = folder.optString("absolutePath").takeIf { it.isNotBlank() }
+                            ))
+                        }
+                    }
+                    if (path.isEmpty()) continue
+                    add(QuickAccessLocation(
+                        id = item.optString("id").ifBlank { UUID.randomUUID().toString() },
+                        label = item.optString("label").ifBlank { path.last().displayName },
+                        accessMode = mode,
+                        treeUriString = item.optString("treeUriString").takeIf { it.isNotBlank() },
+                        path = path, isCustom = true
+                    ))
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun writeCetShortcuts(shortcuts: List<QuickAccessLocation>) {
+        val array = JSONArray()
+        shortcuts.forEach { shortcut ->
+            val item = JSONObject().put("id", shortcut.id).put("label", shortcut.label)
+                .put("accessMode", shortcut.accessMode.name).put("treeUriString", shortcut.treeUriString.orEmpty())
+            val path = JSONArray()
+            shortcut.path.forEach { folder ->
+                path.put(JSONObject().put("documentId", folder.documentId).put("displayName", folder.displayName)
+                    .put("absolutePath", folder.absolutePath.orEmpty()))
+            }
+            item.put("path", path)
+            array.put(item)
+        }
+        preferences.edit().putString(KEY_CET_SHORTCUTS, array.toString()).apply()
+    }
+
+    private fun readCustomFolderIconUris(): Map<String, String> {
+        val raw = preferences.getString(KEY_CUSTOM_FOLDER_ICONS, null) ?: return emptyMap()
+        return runCatching {
+            val json = JSONObject(raw)
+            buildMap {
+                val keys = json.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    json.optString(key).takeIf { it.isNotBlank() }?.let { put(key, it) }
+                }
+            }
+        }.getOrDefault(emptyMap())
+    }
+
     override fun onCleared() {
         entryVisualLoader.clear()
         super.onCleared()
@@ -397,5 +548,7 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
     private companion object {
         const val PREFERENCES_NAME = "jarvision_storage"
         const val KEY_TREE_URI = "selected_tree_uri"
+        const val KEY_CET_SHORTCUTS = "custom_easy_tabs_v1"
+        const val KEY_CUSTOM_FOLDER_ICONS = "custom_folder_icons_v1"
     }
 }
