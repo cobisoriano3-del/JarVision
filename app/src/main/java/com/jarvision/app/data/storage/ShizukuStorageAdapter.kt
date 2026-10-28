@@ -38,8 +38,8 @@ data class ShizukuConnectionStatus(
 }
 
 /**
- * App-process bridge to a Shizuku UserService. The service exposes only read operations inside
- * shared internal storage. It never writes, deletes, or changes permissions on user files.
+ * App-process bridge to the Shizuku UserService. Existing items remain read-only; creation of
+ * new folders, files and empty ZIPs is delegated to the service and confined to shared storage.
  */
 class ShizukuStorageAdapter private constructor(context: Context) {
 
@@ -60,7 +60,7 @@ class ShizukuStorageAdapter private constructor(context: Context) {
                 ShizukuStorageUserService::class.java.name
             )
         )
-            .tag("jarvision-storage-readonly")
+            .tag("jarvision-storage")
             .daemon(false)
             .debuggable(false)
             .processNameSuffix("storage")
@@ -91,7 +91,7 @@ class ShizukuStorageAdapter private constructor(context: Context) {
                     isBinding = false,
                     isConnected = true,
                     serviceUid = uid,
-                    message = "Connected. Browse existing shared-storage folders in read-only mode."
+                    message = "Connected. Browse shared storage and create new items where Shizuku permits."
                 )
             } catch (error: Exception) {
                 remoteService = null
@@ -260,6 +260,21 @@ class ShizukuStorageAdapter private constructor(context: Context) {
         }
     }
 
+    /** Creates a new folder in the specified shared-storage directory through Shizuku. */
+    fun createDirectory(parentPath: String, name: String) {
+        callCreateOperation("folder") { it.createDirectory(parentPath, name) }
+    }
+
+    /** Creates a new empty file in the specified shared-storage directory through Shizuku. */
+    fun createEmptyFile(parentPath: String, name: String) {
+        callCreateOperation("file") { it.createEmptyFile(parentPath, name) }
+    }
+
+    /** Creates a valid, empty ZIP archive in the specified shared-storage directory through Shizuku. */
+    fun createEmptyZip(parentPath: String, name: String) {
+        callCreateOperation("ZIP archive") { it.createEmptyZip(parentPath, name) }
+    }
+
     /** Opens a read-only stream for archive validation or explicit sharing. */
     fun openReadOnlyInputStream(path: String): InputStream {
         val service = requireService()
@@ -300,6 +315,18 @@ class ShizukuStorageAdapter private constructor(context: Context) {
             throw IOException("This looks like a binary file. Read-only preview currently supports text and config files.")
         }
         return String(bytes, StandardCharsets.UTF_8)
+    }
+
+    private fun callCreateOperation(
+        itemDescription: String,
+        operation: (IShizukuStorageService) -> Unit
+    ) {
+        val service = requireService()
+        try {
+            operation(service)
+        } catch (error: RemoteException) {
+            throw IOException(error.message ?: "Shizuku couldn't create the $itemDescription.", error)
+        }
     }
 
     private fun requireService(): IShizukuStorageService =
@@ -354,7 +381,7 @@ class ShizukuStorageAdapter private constructor(context: Context) {
             permissionGranted = granted,
             message = when {
                 remoteService != null -> mutableStatus.value.message
-                granted -> "Shizuku is running. Connect the read-only storage service."
+                granted -> "Shizuku is running. Connect the storage service."
                 else -> "Shizuku is running. JarVision needs permission to connect."
             }
         )
@@ -363,7 +390,7 @@ class ShizukuStorageAdapter private constructor(context: Context) {
     companion object {
         const val REQUEST_PERMISSION_CODE = 5721
         const val MIN_USER_SERVICE_VERSION = 10
-        const val USER_SERVICE_VERSION = 1
+        const val USER_SERVICE_VERSION = 2
         const val KEY_DOCUMENT_ID = "documentId"
         const val KEY_DISPLAY_NAME = "displayName"
         const val KEY_MIME_TYPE = "mimeType"

@@ -20,9 +20,9 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /**
- * Executes file operations through the active storage adapter. Writes are supported only for
- * shared storage with Android access, and for SAF trees with a persisted write grant.
- * Shizuku is deliberately read-only.
+ * Executes file operations through the active storage adapter. Writes are supported for shared
+ * storage and SAF trees with a persisted write grant. Shizuku delegates creation-only operations
+ * to its UserService; rename, delete and move of existing items remain unavailable in that mode.
  */
 class FileOperationCoordinator(
     private val context: Context,
@@ -98,7 +98,9 @@ class FileOperationCoordinator(
                     name
                 ) ?: throw IOException("The storage provider couldn't create the folder.")
             }
-            else -> throw IOException("Creating folders is unavailable in read-only mode.")
+            StorageAccessMode.SHIZUKU_STORAGE ->
+                shizuku.createDirectory(parentAbsolutePath ?: parentDocumentId, name)
+            StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
         }
         return "Created folder: " + name
     }
@@ -128,7 +130,9 @@ class FileOperationCoordinator(
                     resolver, documentUri(treeUri, parentDocumentId), mime, name
                 ) ?: throw IOException("The storage provider couldn't create the file.")
             }
-            else -> throw IOException("Creating files is unavailable in read-only mode.")
+            StorageAccessMode.SHIZUKU_STORAGE ->
+                shizuku.createEmptyFile(parentAbsolutePath ?: parentDocumentId, name)
+            StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
         }
         return "Created file: " + name
     }
@@ -175,7 +179,9 @@ class FileOperationCoordinator(
                     throw error
                 }
             }
-            else -> throw IOException("Creating archives is unavailable in read-only mode.")
+            StorageAccessMode.SHIZUKU_STORAGE ->
+                shizuku.createEmptyZip(parentAbsolutePath ?: parentDocumentId, name)
+            StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
         }
         return "Created archive: " + name
     }

@@ -8,6 +8,9 @@ interface IShizukuStorageService {
     ParcelFileDescriptor openFileReadOnly(String path) = 2;
     int getUid() = 3;
     byte[] loadFolderThumbnail(String path) = 4;
+    void createDirectory(String parentPath, String name) = 5;
+    void createEmptyFile(String parentPath, String name) = 6;
+    void createEmptyZip(String parentPath, String name) = 7;
 
     void destroy() = 16777114;
 }

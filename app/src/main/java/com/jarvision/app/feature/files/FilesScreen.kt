@@ -50,6 +50,7 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.layout.statusBarsIgnoringVisibility
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.WindowInsets
@@ -59,6 +60,7 @@ import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.RectangleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ViewList
 import androidx.compose.material.icons.filled.Sort
@@ -98,6 +100,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -115,6 +118,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -122,6 +126,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.unit.Dp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.Lifecycle
@@ -217,6 +224,11 @@ fun FilesScreen(
             .apply()
     }
 
+    val shizukuAdapter = remember(context) { ShizukuStorageAdapter.get(context) }
+    val fileOperations = remember(context, shizukuAdapter) {
+        FileOperationCoordinator(context, shizukuAdapter)
+    }
+    val shizukuStatus by shizukuAdapter.status.collectAsState()
     val canMutateFiles = when (state.accessMode) {
         StorageAccessMode.SHARED_STORAGE -> true
         StorageAccessMode.DOCUMENT_TREE -> state.treeUriString?.let { value ->
@@ -227,13 +239,25 @@ fun FilesScreen(
         else -> false
     }
 
+    val shizukuCurrentPath = state.currentPath.lastOrNull()?.let {
+        it.absolutePath ?: it.documentId
+    }
+    val hasAuthorizedShizukuCreationRoute =
+        state.accessMode == StorageAccessMode.SHIZUKU_STORAGE &&
+            shizukuStatus.isConnected &&
+            shizukuStatus.permissionGranted &&
+            (shizukuStatus.serviceUid == 0 || shizukuStatus.serviceUid == 2000) &&
+            !shizukuCurrentPath.isNullOrBlank()
+    val canCreateItems = canMutateFiles || hasAuthorizedShizukuCreationRoute
+
     // Collapse the speed dial when its directory, storage context, or tab changes.
     LaunchedEffect(
         isActive,
         state.accessMode,
         state.treeUriString,
         state.currentPath,
-        canMutateFiles
+        canMutateFiles,
+        canCreateItems
     ) {
         fabExpanded = false
     }
@@ -267,11 +291,6 @@ fun FilesScreen(
     }
     val snackbarHostState = remember { SnackbarHostState() }
     val coroutineScope = rememberCoroutineScope()
-    val shizukuAdapter = remember(context) { ShizukuStorageAdapter.get(context) }
-    val fileOperations = remember(context, shizukuAdapter) {
-        FileOperationCoordinator(context, shizukuAdapter)
-    }
-    val shizukuStatus by shizukuAdapter.status.collectAsState()
     var shouldOpenShizukuAfterConnect by remember { mutableStateOf(false) }
     var previewContent by remember { mutableStateOf<Pair<String, String>?>(null) }
     var selectedEntry by remember { mutableStateOf<StorageEntry?>(null) }
@@ -722,8 +741,8 @@ fun FilesScreen(
     }
 
     fun beginCreate(kind: CreateItemKind) {
-        if (!canMutateFiles) {
-            showMessage("Choose a writable storage location to create items.")
+        if (!canCreateItems) {
+            showMessage("Choose a writable SAF/shared-storage location or connect and authorize Shizuku.")
             return
         }
         createName = when (kind) {
@@ -737,8 +756,8 @@ fun FilesScreen(
 
     fun createCurrentItem(kind: CreateItemKind, requestedName: String) {
         val parent = state.currentPath.lastOrNull() ?: return
-        if (!canMutateFiles) {
-            showMessage("Creating items is unavailable in this storage mode.")
+        if (!canCreateItems) {
+            showMessage("No writable storage route is available. Check SAF access or the Shizuku connection.")
             createKind = null
             return
         }
@@ -1022,7 +1041,7 @@ fun FilesScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                if (fabExpanded && canMutateFiles) {
+                if (fabExpanded && canCreateItems) {
                     FloatingActionButton(
                         onClick = { beginCreate(CreateItemKind.FOLDER) },
                         modifier = Modifier.size(48.dp),
@@ -1059,10 +1078,10 @@ fun FilesScreen(
                 }
                 FloatingActionButton(
                     onClick = {
-                        if (canMutateFiles) {
+                        if (canCreateItems) {
                             fabExpanded = !fabExpanded
                         } else {
-                            showMessage("Choose a writable storage location to create items.")
+                            showMessage("Choose a writable SAF/shared-storage location or connect and authorize Shizuku.")
                         }
                     },
                     modifier = Modifier.size(56.dp),
@@ -1475,12 +1494,7 @@ private fun buildQuickAccessLocations(
             val rootPath = (root.absolutePath ?: root.documentId).trimEnd('/')
             val defaults = listOf(
                 "" to "Device storage",
-                "Download" to "Download",
-                "Music" to "Music",
-                "DCIM" to "DCIM",
-                "Pictures" to "Pictures",
-                "Movies" to "Movies",
-                "Documents" to "Documents"
+                "Download" to "Download"
             )
             defaults.map { (relative, label) ->
                 val chain = mutableListOf(root)
@@ -1565,11 +1579,17 @@ private fun FileBrowserToolbar(
     onSaveCurrentFolderAsCet: () -> Unit
 ) {
     var pathMenuExpanded by remember { mutableStateOf(false) }
+    var toolbarHeightPx by remember { mutableStateOf(0) }
     var viewMenuExpanded by remember { mutableStateOf(false) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
     var overflowExpanded by remember { mutableStateOf(false) }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+    BoxWithConstraints(
+        modifier = Modifier
+            .fillMaxWidth()
+            .onSizeChanged { toolbarHeightPx = it.height }
+    ) {
+        val toolbarWidth = maxWidth
         val compactActions = maxWidth < 380.dp
         val veryCompact = maxWidth < 280.dp
 
@@ -1614,50 +1634,29 @@ private fun FileBrowserToolbar(
                         )
                     )
                 } else {
-                    Text(
-                        text = title,
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Box {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 48.dp)
+                            .clickable { pathMenuExpanded = true }
+                            .padding(horizontal = 4.dp, vertical = 4.dp),
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = title,
+                            color = Color.White,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
                         Text(
                             text = path,
-                            modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { pathMenuExpanded = true },
                             color = Color.White.copy(alpha = 0.76f),
                             style = MaterialTheme.typography.bodySmall,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        DropdownMenu(
-                            expanded = pathMenuExpanded,
-                            onDismissRequest = { pathMenuExpanded = false },
-                            shape = RoundedCornerShape(18.dp),
-                            containerColor = Color(0xFF10345D),
-                            tonalElevation = 0.dp,
-                            shadowElevation = 16.dp,
-                            border = BorderStroke(1.dp, Color(0xFF397AB5).copy(alpha = 0.9f))
-                        ) {
-                            quickAccessLocations.forEach { location ->
-                                DropdownMenuItem(
-                                    text = { Text(location.label, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                                    leadingIcon = { Icon(quickAccessIcon(location.label), contentDescription = null) },
-                                    trailingIcon = {
-                                        if (location.isCustom) {
-                                            IconButton(onClick = { onRemoveCetShortcut(location.id) }) {
-                                                Icon(Icons.Filled.Close, contentDescription = "Remove CET shortcut")
-                                            }
-                                        }
-                                    },
-                                    onClick = {
-                                        pathMenuExpanded = false
-                                        onSelectQuickAccess(location)
-                                    }
-                                )
-                            }
-                        }
                     }
                 }
             }
@@ -1964,6 +1963,71 @@ private fun FileBrowserToolbar(
                             onAbout()
                         }
                     )
+                }
+            }
+        }
+
+        if (pathMenuExpanded) {
+            Popup(
+                alignment = Alignment.TopStart,
+                offset = IntOffset(x = 0, y = toolbarHeightPx),
+                onDismissRequest = { pathMenuExpanded = false },
+                properties = PopupProperties(focusable = true)
+            ) {
+                Surface(
+                    modifier = Modifier.width(toolbarWidth),
+                    shape = RectangleShape,
+                    color = Color(0xFF10345D),
+                    tonalElevation = 0.dp,
+                    shadowElevation = 8.dp,
+                    border = BorderStroke(1.dp, Color(0xFF397AB5))
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 360.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        quickAccessLocations.forEach { location ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = 48.dp)
+                                    .clickable {
+                                        pathMenuExpanded = false
+                                        onSelectQuickAccess(location)
+                                    }
+                                    .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = quickAccessIcon(location.label),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                    tint = Color.White
+                                )
+                                Spacer(Modifier.width(14.dp))
+                                Text(
+                                    text = location.label,
+                                    modifier = Modifier.weight(1f),
+                                    color = Color.White,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (location.isCustom) {
+                                    IconButton(
+                                        onClick = { onRemoveCetShortcut(location.id) }
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Close,
+                                            contentDescription = "Remove CET shortcut",
+                                            tint = Color.White
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }

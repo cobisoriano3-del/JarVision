@@ -11,11 +11,14 @@ import com.jarvision.app.data.storage.StorageEntry
 import java.io.File
 import java.io.IOException
 import java.net.URLConnection
+import java.nio.file.Files
 import java.util.Locale
+import java.util.zip.ZipOutputStream
 
 /**
- * Runs in the user service process started by Shizuku, not in JarVision's normal app process.
- * Its file access is read-only and deliberately confined to shared internal storage.
+ * Runs in the Shizuku UserService process, separate from JarVision's normal app process.
+ * Existing-item browsing and reading are read-only; only creation of new items is supported,
+ * and every operation is confined to shared internal storage.
  */
 @Keep
 class ShizukuStorageUserService : IShizukuStorageService.Stub() {
@@ -79,6 +82,50 @@ class ShizukuStorageUserService : IShizukuStorageService.Stub() {
         }
     }
 
+    override fun createDirectory(parentPath: String, name: String) {
+        val target = checkedCreationTarget(parentPath, name)
+        try {
+            if (target.exists()) throw RemoteException("An item with that name already exists.")
+            if (!target.mkdir()) throw RemoteException("Couldn't create the folder.")
+        } catch (error: RemoteException) {
+            throw error
+        } catch (error: SecurityException) {
+            throw RemoteException("Shizuku was denied permission to create this folder.")
+        }
+    }
+
+    override fun createEmptyFile(parentPath: String, name: String) {
+        val target = checkedCreationTarget(parentPath, name)
+        try {
+            if (!target.createNewFile()) {
+                throw RemoteException("An item with that name already exists.")
+            }
+        } catch (error: RemoteException) {
+            throw error
+        } catch (error: IOException) {
+            throw RemoteException("Couldn't create the file: " + (error.message ?: "storage error."))
+        } catch (error: SecurityException) {
+            throw RemoteException("Shizuku was denied permission to create this file.")
+        }
+    }
+
+    override fun createEmptyZip(parentPath: String, name: String) {
+        val target = checkedCreationTarget(parentPath, name)
+        var created = false
+        try {
+            if (!target.createNewFile()) {
+                throw RemoteException("An item with that name already exists.")
+            }
+            created = true
+            ZipOutputStream(target.outputStream().buffered()).use { }
+        } catch (error: RemoteException) {
+            throw error
+        } catch (error: Exception) {
+            if (created) runCatching { target.delete() }
+            throw RemoteException("Couldn't create the ZIP archive: " + (error.message ?: "storage error."))
+        }
+    }
+
     override fun getUid(): Int = Os.getuid()
 
     override fun loadFolderThumbnail(path: String): ByteArray? {
@@ -127,6 +174,30 @@ class ShizukuStorageUserService : IShizukuStorageService.Stub() {
             throw RemoteException("Shizuku access is limited to shared internal storage.")
         }
         return file
+    }
+
+    private fun checkedCreationTarget(parentPath: String, name: String): File {
+        if (name.isBlank() || name == "." || name == ".." ||
+            name.contains('/') || name.contains('\\') || name.any { it.code < 32 }
+        ) {
+            throw RemoteException("Enter a valid name without folder separators.")
+        }
+        val parent = checkedSharedStoragePath(parentPath)
+        if (!parent.isDirectory) throw RemoteException("The destination is not a folder.")
+        val canonicalParent = parent.canonicalFile
+        val requestedTarget = File(canonicalParent, name)
+        if (Files.isSymbolicLink(requestedTarget.toPath())) {
+            throw RemoteException("Creating over a symbolic link is not allowed.")
+        }
+        val target = try {
+            requestedTarget.canonicalFile
+        } catch (error: IOException) {
+            throw RemoteException("The new item path is invalid.")
+        }
+        if (target.parentFile != canonicalParent || !isInsideSharedStorage(target.path)) {
+            throw RemoteException("Creation is limited to direct children of shared internal storage folders.")
+        }
+        return target
     }
 
     private val canonicalSharedStorageRoot: String by lazy {
