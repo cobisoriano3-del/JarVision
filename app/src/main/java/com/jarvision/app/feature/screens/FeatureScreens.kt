@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -32,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -39,162 +41,88 @@ import androidx.compose.ui.unit.dp
 import com.jarvision.app.ui.components.FeatureStatusScreen
 
 @Composable
-fun ProjectsScreen() {
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 24.dp, vertical = 20.dp),
-        verticalArrangement = Arrangement.Top
+fun ProjectsScreen(searchQuery: String = "", gridView: Boolean = false) {
+    val searching = searchQuery.isNotBlank()
+    val emblemSize = if (gridView) 112.dp else 136.dp
+    Box(
+        modifier = Modifier.fillMaxSize().background(
+            Brush.verticalGradient(listOf(Color(0xFF020B18), Color(0xFF03152A), Color(0xFF020B18)))
+        ).padding(horizontal = 24.dp),
+        contentAlignment = Alignment.Center
     ) {
-        Row(
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
         ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "Project Workspace",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onBackground
-                )
-                Spacer(Modifier.height(6.dp))
-                Text(
-                    text = "Organize your work in one place.",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Surface(
-                modifier = Modifier.size(60.dp),
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Filled.Workspaces,
-                        contentDescription = null,
-                        modifier = Modifier.size(30.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(24.dp))
-
-        // UI-only in this pass. Connect this option when persistent project creation is implemented.
-        Surface(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(24.dp),
-            color = Color(0xFF071B30),
-            border = BorderStroke(1.5.dp, Color(0xFF258DFF))
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 16.dp, vertical = 18.dp),
-                verticalAlignment = Alignment.CenterVertically
+            Box(
+                modifier = Modifier.size(emblemSize).background(
+                    Brush.radialGradient(listOf(Color(0xFF0A3767), Color(0xFF062344), Color(0xFF03152A))),
+                    CircleShape
+                ),
+                contentAlignment = Alignment.Center
             ) {
                 Surface(
-                    modifier = Modifier.size(50.dp),
-                    shape = RoundedCornerShape(15.dp),
-                    color = Color(0xFF153B5E)
+                    modifier = Modifier.size(if (gridView) 82.dp else 100.dp),
+                    shape = CircleShape,
+                    color = Color(0xFF06264A),
+                    border = BorderStroke(1.dp, Color(0xFF15508B))
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            imageVector = Icons.Filled.Add,
+                            imageVector = Icons.Filled.FolderOpen,
                             contentDescription = null,
-                            modifier = Modifier.size(30.dp),
-                            tint = Color(0xFFE8F4FF)
+                            modifier = Modifier.size(if (gridView) 48.dp else 58.dp),
+                            tint = Color(0xFF2695FF)
                         )
+                        Surface(
+                            modifier = Modifier.align(Alignment.BottomEnd).padding(3.dp).size(32.dp),
+                            shape = CircleShape,
+                            color = Color(0xFF1685FF),
+                            border = BorderStroke(2.dp, Color(0xFF06264A))
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(Icons.Filled.Add, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+                            }
+                        }
                     }
                 }
-                Spacer(Modifier.width(14.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "Create Project",
-                        style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold,
-                        color = MaterialTheme.colorScheme.onBackground
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        text = "Start a new workspace for your files and code.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Spacer(Modifier.width(8.dp))
-                Icon(
-                    imageVector = Icons.Filled.ArrowForwardIos,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp),
-                    tint = MaterialTheme.colorScheme.onBackground
-                )
             }
-        }
-
-        Spacer(Modifier.height(28.dp))
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(1.dp)
-                    .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
-            )
+            Spacer(Modifier.height(28.dp))
             Text(
-                text = "Projects",
-                modifier = Modifier.padding(horizontal = 14.dp),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(1.dp)
-                    .background(MaterialTheme.colorScheme.outline.copy(alpha = 0.65f))
-            )
-        }
-
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 52.dp, bottom = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Surface(
-                modifier = Modifier.size(78.dp),
-                shape = RoundedCornerShape(24.dp),
-                color = MaterialTheme.colorScheme.surface
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(
-                        imageVector = Icons.Filled.FolderOpen,
-                        contentDescription = null,
-                        modifier = Modifier.size(42.dp),
-                        tint = MaterialTheme.colorScheme.primary
-                    )
-                }
-            }
-            Spacer(Modifier.height(18.dp))
-            Text(
-                text = "No projects yet",
+                text = if (searching) "No projects found" else "No projects yet",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = MaterialTheme.colorScheme.onBackground,
                 textAlign = TextAlign.Center
             )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(10.dp))
             Text(
-                text = "Your created projects will appear here. Create your first project to get started.",
+                text = if (searching) "Try another search or clear the search field."
+                else "Create your first project to get started.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
+            if (!searching) {
+                Spacer(Modifier.height(30.dp))
+                Surface(
+                    modifier = Modifier.fillMaxWidth().widthIn(max = 280.dp).height(54.dp),
+                    shape = RoundedCornerShape(18.dp),
+                    color = Color(0xFF087DFA),
+                    border = BorderStroke(1.dp, Color(0xFF3298FF))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 20.dp),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(24.dp), tint = Color.White)
+                        Spacer(Modifier.width(12.dp))
+                        Text("Create Project", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = Color.White)
+                    }
+                }
+            }
         }
     }
 }
