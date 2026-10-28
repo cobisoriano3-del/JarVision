@@ -1,6 +1,5 @@
 package com.jarvision.app.ui.navigation
 
-import android.app.Activity
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -45,7 +44,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -80,7 +78,6 @@ private data class MainTab(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun JarVisionApp() {
-    val context = LocalContext.current
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route ?: Routes.FILES
@@ -284,8 +281,7 @@ fun JarVisionApp() {
                 FilesScreen(
                     onOpenSettings = {
                         navController.navigate(Routes.SETTINGS) { launchSingleTop = true }
-                    },
-                    onExit = { (context as? Activity)?.finish() }
+                    }
                 )
             }
             composable(Routes.PROJECTS) { ProjectsScreen() }

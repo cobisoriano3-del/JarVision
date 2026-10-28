@@ -166,8 +166,7 @@ private enum class CreateItemKind { FOLDER, FILE, ZIP }
 @Composable
 fun FilesScreen(
     filesViewModel: FilesViewModel = viewModel(),
-    onOpenSettings: () -> Unit = {},
-    onExit: () -> Unit = {}
+    onOpenSettings: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -945,7 +944,6 @@ fun FilesScreen(
                         onOpenShizuku = ::openShizukuBrowser,
                         onOpenSettings = onOpenSettings,
                         onAbout = { aboutDialogVisible = true },
-                        onExit = onExit,
                         onCreateFolder = { beginCreate(CreateItemKind.FOLDER) },
                         onCreateFile = { beginCreate(CreateItemKind.FILE) },
                         onCreateArchive = { beginCreate(CreateItemKind.ZIP) }
@@ -1428,7 +1426,6 @@ private fun FileBrowserToolbar(
     onOpenShizuku: () -> Unit,
     onOpenSettings: () -> Unit,
     onAbout: () -> Unit,
-    onExit: () -> Unit,
     onCreateFolder: () -> Unit,
     onCreateFile: () -> Unit,
     onCreateArchive: () -> Unit
@@ -1801,14 +1798,6 @@ private fun FileBrowserToolbar(
                         onClick = {
                             overflowExpanded = false
                             onAbout()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Exit") },
-                        leadingIcon = { Icon(Icons.Filled.Close, contentDescription = null) },
-                        onClick = {
-                            overflowExpanded = false
-                            onExit()
                         }
                     )
                 }
