@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ViewWeek
 import androidx.compose.material.icons.filled.Workspaces
+import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -43,10 +44,9 @@ import com.jarvision.app.ui.components.FeatureStatusScreen
 @Composable
 fun ProjectsScreen(searchQuery: String = "", gridView: Boolean = false) {
     val searching = searchQuery.isNotBlank()
-    val emblemSize = if (gridView) 124.dp else 156.dp
-    val emblemCoreSize = if (gridView) 92.dp else 116.dp
-    val folderIconSize = if (gridView) 58.dp else 72.dp
-    val badgeSize = if (gridView) 34.dp else 42.dp
+    val emblemSize = if (gridView) 116.dp else 138.dp
+    val folderIconSize = if (gridView) 68.dp else 84.dp
+    val badgeSize = if (gridView) 30.dp else 36.dp
 
     Box(
         modifier = Modifier
@@ -63,83 +63,66 @@ fun ProjectsScreen(searchQuery: String = "", gridView: Boolean = false) {
                 .padding(horizontal = 18.dp)
         ) {
             if (!searching) {
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(14.dp))
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(24.dp),
-                    color = Color.Transparent,
-                    border = BorderStroke(1.dp, Color(0xFF1684F6).copy(alpha = 0.78f)),
-                    shadowElevation = 8.dp
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color(0xFF091D33),
+                    border = BorderStroke(1.dp, Color(0xFF284967).copy(alpha = 0.9f)),
+                    shadowElevation = 1.dp
                 ) {
                     Row(
                         modifier = Modifier
-                            .background(
-                                Brush.horizontalGradient(
-                                    listOf(
-                                        Color(0xFF064A9B),
-                                        Color(0xFF075EC7),
-                                        Color(0xFF087DFA)
-                                    )
-                                )
-                            )
+                            .background(Color(0xFF091D33))
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Surface(
-                            modifier = Modifier.size(64.dp),
-                            shape = RoundedCornerShape(20.dp),
-                            color = Color(0xFF087DFA),
-                            border = BorderStroke(1.dp, Color(0xFF45A6FF)),
-                            shadowElevation = 4.dp
+                            modifier = Modifier.size(56.dp),
+                            shape = RoundedCornerShape(17.dp),
+                            color = Color(0xFF091B30),
+                            border = BorderStroke(1.dp, Color(0xFF254260)),
+                            shadowElevation = 0.dp
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(
-                                        Brush.verticalGradient(
-                                            listOf(Color(0xFF139AFF), Color(0xFF0563D9))
-                                        )
-                                    ),
-                                contentAlignment = Alignment.Center
-                            ) {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                                 Icon(
                                     imageVector = Icons.Filled.Add,
                                     contentDescription = null,
-                                    modifier = Modifier.size(34.dp),
-                                    tint = Color.White
+                                    modifier = Modifier.size(32.dp),
+                                    tint = Color(0xFF278BEE)
                                 )
                             }
                         }
-                        Spacer(Modifier.width(14.dp))
+                        Spacer(Modifier.width(12.dp))
                         Column(
                             modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
                         ) {
                             Text(
                                 text = "Create Project",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Color.White,
+                                color = Color(0xFFF4F7FF),
                                 maxLines = 1
                             )
                             Text(
-                                text = "Start a new project and bring your ideas to life.",
+                                text = "Start a new project.",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = Color(0xFFC5E1FF),
-                                maxLines = 2
+                                color = Color(0xFFA6BBD5),
+                                maxLines = 1
                             )
                         }
                         Spacer(Modifier.width(8.dp))
                         Icon(
                             imageVector = Icons.Filled.ArrowForwardIos,
                             contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                            tint = Color(0xFFEAF5FF)
+                            modifier = Modifier.size(17.dp),
+                            tint = Color(0xFF459DF5)
                         )
                     }
                 }
-                Spacer(Modifier.height(20.dp))
-                ProjectsDivider(emphasized = true)
+                Spacer(Modifier.height(14.dp))
+                ProjectsDivider()
             } else {
                 Spacer(Modifier.height(8.dp))
             }
@@ -155,83 +138,58 @@ fun ProjectsScreen(searchQuery: String = "", gridView: Boolean = false) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(emblemSize)
-                            .background(
-                                Brush.radialGradient(
-                                    listOf(
-                                        Color(0xFF0B3B70),
-                                        Color(0xFF062648),
-                                        Color(0xFF03152A)
-                                    )
-                                ),
-                                CircleShape
-                            ),
-                        contentAlignment = Alignment.Center
+                    Surface(
+                        modifier = Modifier.size(emblemSize),
+                        shape = CircleShape,
+                        color = Color(0xFF0A1C33),
+                        border = BorderStroke(1.dp, Color(0xFF122D49)),
+                        shadowElevation = 0.dp
                     ) {
-                        Surface(
-                            modifier = Modifier.size(emblemCoreSize),
-                            shape = RoundedCornerShape(32.dp),
-                            color = Color(0xFF06264A),
-                            border = BorderStroke(1.dp, Color(0xFF2076C4)),
-                            shadowElevation = 8.dp
-                        ) {
-                            Box(
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Outlined.FolderOpen,
+                                contentDescription = null,
+                                modifier = Modifier.size(folderIconSize),
+                                tint = Color(0xFF369AFF)
+                            )
+                            Surface(
                                 modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(
-                                        Brush.verticalGradient(
-                                            listOf(Color(0xFF0B427A), Color(0xFF05213E))
-                                        )
-                                    ),
-                                contentAlignment = Alignment.Center
+                                    .align(Alignment.BottomEnd)
+                                    .padding(if (gridView) 13.dp else 15.dp)
+                                    .size(badgeSize),
+                                shape = CircleShape,
+                                color = Color(0xFF087FF0),
+                                border = BorderStroke(1.dp, Color(0xFF0D2D4D)),
+                                shadowElevation = 1.dp
                             ) {
-                                Icon(
-                                    imageVector = Icons.Filled.FolderOpen,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(folderIconSize),
-                                    tint = Color(0xFF2998FF)
-                                )
-                                Surface(
-                                    modifier = Modifier
-                                        .align(Alignment.BottomEnd)
-                                        .padding(3.dp)
-                                        .size(badgeSize),
-                                    shape = CircleShape,
-                                    color = Color(0xFF087DFA),
-                                    border = BorderStroke(2.dp, Color(0xFF06264A)),
-                                    shadowElevation = 4.dp
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Add,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(if (gridView) 20.dp else 26.dp),
-                                            tint = Color.White
-                                        )
-                                    }
+                                Box(contentAlignment = Alignment.Center) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Add,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(if (gridView) 19.dp else 23.dp),
+                                        tint = Color(0xFF061A2D)
+                                    )
                                 }
                             }
                         }
                     }
-                    Spacer(Modifier.height(28.dp))
+                    Spacer(Modifier.height(24.dp))
                     Text(
                         text = if (searching) "No projects found" else "Projects",
                         style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFFF0F6FF),
+                        color = Color(0xFFF4F7FF),
                         textAlign = TextAlign.Center
                     )
-                    Spacer(Modifier.height(10.dp))
+                    Spacer(Modifier.height(8.dp))
                     Text(
                         text = if (searching) {
                             "Try another search or clear the search field."
                         } else {
-                            "Your projects will appear here after you create one."
+                            "Your projects will appear here."
                         },
                         style = MaterialTheme.typography.bodyLarge,
-                        color = Color(0xFFA8C8EB),
+                        color = Color(0xFFA7BEDB),
                         textAlign = TextAlign.Center
                     )
                 }
