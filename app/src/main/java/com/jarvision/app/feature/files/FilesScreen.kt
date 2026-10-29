@@ -1924,152 +1924,152 @@ private fun FileBrowserToolbar(
                             }
                         )
                     } else {
-                    if (clipboardPresent && compactActions) {
-                        DropdownMenuItem(
-                            text = { Text("Paste") },
-                            enabled = canPaste,
-                            onClick = {
-                                overflowExpanded = false
-                                onPaste()
-                            }
-                        )
-                    }
-                    if (veryCompact) {
-                        DropdownMenuItem(
-                            text = { Text(if (searchExpanded) "Close search" else "Search") },
-                            leadingIcon = {
-                                Icon(
-                                    if (searchExpanded) Icons.Filled.Close else Icons.Filled.Search,
-                                    contentDescription = null
-                                )
-                            },
-                            onClick = {
-                                overflowExpanded = false
-                                onToggleSearch()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("View: Compact") },
-                            leadingIcon = { Icon(Icons.Filled.ViewList, contentDescription = null) },
-                            trailingIcon = {
-                                if (viewMode == BrowserViewMode.COMPACT) Icon(Icons.Filled.Check, contentDescription = null)
-                            },
-                            onClick = {
-                                overflowExpanded = false
-                                onViewModeChange(BrowserViewMode.COMPACT)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("View: Detailed") },
-                            leadingIcon = { Icon(Icons.Filled.ViewList, contentDescription = null) },
-                            trailingIcon = {
-                                if (viewMode == BrowserViewMode.DETAILED) Icon(Icons.Filled.Check, contentDescription = null)
-                            },
-                            onClick = {
-                                overflowExpanded = false
-                                onViewModeChange(BrowserViewMode.DETAILED)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("View: Grid") },
-                            leadingIcon = { Icon(Icons.Filled.GridView, contentDescription = null) },
-                            trailingIcon = {
-                                if (viewMode == BrowserViewMode.GRID) Icon(Icons.Filled.Check, contentDescription = null)
-                            },
-                            onClick = {
-                                overflowExpanded = false
-                                onViewModeChange(BrowserViewMode.GRID)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(if (showHiddenFiles) "Hide hidden files" else "Show hidden files") },
-                            onClick = {
-                                overflowExpanded = false
-                                onToggleHiddenFiles()
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Sort by: Name") },
-                            onClick = {
-                                overflowExpanded = false
-                                onSortOrderChange(BrowserSortOrder.NAME)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Sort by: Size") },
-                            onClick = {
-                                overflowExpanded = false
-                                onSortOrderChange(BrowserSortOrder.SIZE)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Sort by: Date") },
-                            onClick = {
-                                overflowExpanded = false
-                                onSortOrderChange(BrowserSortOrder.DATE)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Sort by: Type") },
-                            onClick = {
-                                overflowExpanded = false
-                                onSortOrderChange(BrowserSortOrder.TYPE)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(if (sortDescending) "Order: Descending" else "Order: Ascending") },
-                            onClick = {
-                                overflowExpanded = false
-                                onToggleSortDirection()
-                            }
-                        )
-                    }
-
-                    DropdownMenuItem(
-                        text = { Text("Multi-select") },
-                        onClick = {
-                            overflowExpanded = false
-                            onToggleMultiSelect()
+                        if (clipboardPresent && compactActions) {
+                            DropdownMenuItem(
+                                text = { Text("Paste") },
+                                enabled = canPaste,
+                                onClick = {
+                                    overflowExpanded = false
+                                    onPaste()
+                                }
+                            )
                         }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("CET · Save current folder") },
-                        leadingIcon = { Icon(Icons.Filled.FolderOpen, contentDescription = null) },
-                        onClick = {
-                            overflowExpanded = false
-                            onSaveCurrentFolderAsCet()
+                        if (veryCompact) {
+                            DropdownMenuItem(
+                                text = { Text(if (searchExpanded) "Close search" else "Search") },
+                                leadingIcon = {
+                                    Icon(
+                                        if (searchExpanded) Icons.Filled.Close else Icons.Filled.Search,
+                                        contentDescription = null
+                                    )
+                                },
+                                onClick = {
+                                    overflowExpanded = false
+                                    onToggleSearch()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("View: Compact") },
+                                leadingIcon = { Icon(Icons.Filled.ViewList, contentDescription = null) },
+                                trailingIcon = {
+                                    if (viewMode == BrowserViewMode.COMPACT) Icon(Icons.Filled.Check, contentDescription = null)
+                                },
+                                onClick = {
+                                    overflowExpanded = false
+                                    onViewModeChange(BrowserViewMode.COMPACT)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("View: Detailed") },
+                                leadingIcon = { Icon(Icons.Filled.ViewList, contentDescription = null) },
+                                trailingIcon = {
+                                    if (viewMode == BrowserViewMode.DETAILED) Icon(Icons.Filled.Check, contentDescription = null)
+                                },
+                                onClick = {
+                                    overflowExpanded = false
+                                    onViewModeChange(BrowserViewMode.DETAILED)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("View: Grid") },
+                                leadingIcon = { Icon(Icons.Filled.GridView, contentDescription = null) },
+                                trailingIcon = {
+                                    if (viewMode == BrowserViewMode.GRID) Icon(Icons.Filled.Check, contentDescription = null)
+                                },
+                                onClick = {
+                                    overflowExpanded = false
+                                    onViewModeChange(BrowserViewMode.GRID)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (showHiddenFiles) "Hide hidden files" else "Show hidden files") },
+                                onClick = {
+                                    overflowExpanded = false
+                                    onToggleHiddenFiles()
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Sort by: Name") },
+                                onClick = {
+                                    overflowExpanded = false
+                                    onSortOrderChange(BrowserSortOrder.NAME)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Sort by: Size") },
+                                onClick = {
+                                    overflowExpanded = false
+                                    onSortOrderChange(BrowserSortOrder.SIZE)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Sort by: Date") },
+                                onClick = {
+                                    overflowExpanded = false
+                                    onSortOrderChange(BrowserSortOrder.DATE)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Sort by: Type") },
+                                onClick = {
+                                    overflowExpanded = false
+                                    onSortOrderChange(BrowserSortOrder.TYPE)
+                                }
+                            )
+                            DropdownMenuItem(
+                                text = { Text(if (sortDescending) "Order: Descending" else "Order: Ascending") },
+                                onClick = {
+                                    overflowExpanded = false
+                                    onToggleSortDirection()
+                                }
+                            )
                         }
-                    )
-                    if (needsSafWriteGrant) {
+    
                         DropdownMenuItem(
-                            text = { Text("Grant write access") },
+                            text = { Text("Multi-select") },
                             onClick = {
                                 overflowExpanded = false
-                                onGrantWriteAccess()
+                                onToggleMultiSelect()
                             }
                         )
-                    }
-                    DropdownMenuItem(
-                        text = { Text(if (shizukuConnected) "Browse protected folders" else "Connect Shizuku") },
-                        onClick = {
-                            overflowExpanded = false
-                            onOpenShizuku()
+                        DropdownMenuItem(
+                            text = { Text("CET · Save current folder") },
+                            leadingIcon = { Icon(Icons.Filled.FolderOpen, contentDescription = null) },
+                            onClick = {
+                                overflowExpanded = false
+                                onSaveCurrentFolderAsCet()
+                            }
+                        )
+                        if (needsSafWriteGrant) {
+                            DropdownMenuItem(
+                                text = { Text("Grant write access") },
+                                onClick = {
+                                    overflowExpanded = false
+                                    onGrantWriteAccess()
+                                }
+                            )
                         }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Settings") },
-                        onClick = {
-                            overflowExpanded = false
-                            onOpenSettings()
-                        }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("About") },
-                        onClick = {
-                            overflowExpanded = false
-                            onAbout()
-                        }
-                    )
+                        DropdownMenuItem(
+                            text = { Text(if (shizukuConnected) "Browse protected folders" else "Connect Shizuku") },
+                            onClick = {
+                                overflowExpanded = false
+                                onOpenShizuku()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Settings") },
+                            onClick = {
+                                overflowExpanded = false
+                                onOpenSettings()
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("About") },
+                            onClick = {
+                                overflowExpanded = false
+                                onAbout()
+                            }
+                        )
                     }
                 }
             }
@@ -2090,60 +2090,60 @@ private fun FileBrowserToolbar(
                         fadeOut(animationSpec = tween(110))
                 ) {
                     Surface(
-                    modifier = Modifier.width(toolbarWidth),
-                    shape = RoundedCornerShape(16.dp),
-                    color = Color(0xFF071B32),
-                    tonalElevation = 0.dp,
-                    shadowElevation = 8.dp,
-                    border = BorderStroke(1.dp, Color(0xFF397AB5))
-                ) {
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 360.dp)
-                            .verticalScroll(rememberScrollState())
+                        modifier = Modifier.width(toolbarWidth),
+                        shape = RoundedCornerShape(16.dp),
+                        color = Color(0xFF071B32),
+                        tonalElevation = 0.dp,
+                        shadowElevation = 8.dp,
+                        border = BorderStroke(1.dp, Color(0xFF397AB5))
                     ) {
-                        quickAccessLocations.forEach { location ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .heightIn(min = 48.dp)
-                                    .clickable {
-                                        pathMenuExpanded = false
-                                        onSelectQuickAccess(location)
-                                    }
-                                    .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                    imageVector = quickAccessIcon(location.label),
-                                    contentDescription = null,
-                                    modifier = Modifier.size(20.dp),
-                                    tint = Color.White
-                                )
-                                Spacer(Modifier.width(14.dp))
-                                Text(
-                                    text = location.label,
-                                    modifier = Modifier.weight(1f),
-                                    color = Color.White,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                                if (location.isCustom) {
-                                    IconButton(
-                                        onClick = { onRemoveCetShortcut(location.id) }
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Close,
-                                            contentDescription = "Remove CET shortcut",
-                                            tint = Color.White
-                                        )
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 360.dp)
+                                .verticalScroll(rememberScrollState())
+                        ) {
+                            quickAccessLocations.forEach { location ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = 48.dp)
+                                        .clickable {
+                                            pathMenuExpanded = false
+                                            onSelectQuickAccess(location)
+                                        }
+                                        .padding(start = 16.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = quickAccessIcon(location.label),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = Color.White
+                                    )
+                                    Spacer(Modifier.width(14.dp))
+                                    Text(
+                                        text = location.label,
+                                        modifier = Modifier.weight(1f),
+                                        color = Color.White,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (location.isCustom) {
+                                        IconButton(
+                                            onClick = { onRemoveCetShortcut(location.id) }
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Close,
+                                                contentDescription = "Remove CET shortcut",
+                                                tint = Color.White
+                                            )
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
                 }
             }
         }
