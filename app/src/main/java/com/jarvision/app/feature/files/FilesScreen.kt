@@ -13,6 +13,16 @@ import android.webkit.MimeTypeMap
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.core.MutableTransitionState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -57,6 +67,7 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.items as gridItems
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -145,6 +156,7 @@ import com.jarvision.app.data.storage.SharedStorageGateway
 import com.jarvision.app.data.storage.ShizukuStorageAdapter
 import com.jarvision.app.data.storage.StorageEntry
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -264,32 +276,47 @@ fun FilesScreen(
         fabExpanded = false
     }
 
-    val visibleEntries = remember(
-        state.entries, searchQuery, showHiddenFiles, sortOrder, sortDescending
+    val visibleEntries by produceState(
+        emptyList<StorageEntry>(),
+        state.entries,
+        searchQuery,
+        showHiddenFiles,
+        sortOrder,
+        sortDescending
     ) {
-        val comparator: Comparator<StorageEntry> = when (sortOrder) {
-            BrowserSortOrder.NAME -> Comparator { left, right ->
-                left.displayName.compareTo(right.displayName, ignoreCase = true)
+        val entriesSnapshot = state.entries
+        val query = searchQuery.trim()
+        val includeHidden = showHiddenFiles
+        val activeSortOrder = sortOrder
+        val descending = sortDescending
+
+        value = withContext(Dispatchers.Default) {
+            val comparator: Comparator<StorageEntry> = when (activeSortOrder) {
+                BrowserSortOrder.NAME -> Comparator { left, right ->
+                    left.displayName.compareTo(right.displayName, ignoreCase = true)
+                }
+                BrowserSortOrder.SIZE -> Comparator { left, right ->
+                    (left.sizeBytes ?: -1L).compareTo(right.sizeBytes ?: -1L)
+                }
+                BrowserSortOrder.DATE -> Comparator { left, right ->
+                    (left.lastModifiedMillis ?: -1L).compareTo(right.lastModifiedMillis ?: -1L)
+                }
+                BrowserSortOrder.TYPE -> Comparator { left, right ->
+                    val leftType = left.displayName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                    val rightType = right.displayName.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                    val byType = leftType.compareTo(rightType)
+                    if (byType != 0) byType else {
+                        left.displayName.compareTo(right.displayName, ignoreCase = true)
+                    }
+                }
             }
-            BrowserSortOrder.SIZE -> Comparator { left, right ->
-                (left.sizeBytes ?: -1L).compareTo(right.sizeBytes ?: -1L)
-            }
-            BrowserSortOrder.DATE -> Comparator { left, right ->
-                (left.lastModifiedMillis ?: -1L).compareTo(right.lastModifiedMillis ?: -1L)
-            }
-            BrowserSortOrder.TYPE -> Comparator { left, right ->
-                val leftType = left.displayName.substringAfterLast('.', "").lowercase(Locale.ROOT)
-                val rightType = right.displayName.substringAfterLast('.', "").lowercase(Locale.ROOT)
-                val byType = leftType.compareTo(rightType)
-                if (byType != 0) byType else left.displayName.compareTo(right.displayName, ignoreCase = true)
-            }
+            val orderedComparator = if (descending) comparator.reversed() else comparator
+            entriesSnapshot.asSequence()
+                .filter { includeHidden || !it.displayName.startsWith(".") }
+                .filter { query.isBlank() || it.displayName.contains(query, ignoreCase = true) }
+                .toList()
+                .sortedWith(compareBy<StorageEntry> { !it.isDirectory }.then(orderedComparator))
         }
-        val orderedComparator = if (sortDescending) comparator.reversed() else comparator
-        state.entries.asSequence()
-            .filter { showHiddenFiles || !it.displayName.startsWith(".") }
-            .filter { searchQuery.isBlank() || it.displayName.contains(searchQuery.trim(), ignoreCase = true) }
-            .toList()
-            .sortedWith(compareBy<StorageEntry> { !it.isDirectory }.then(orderedComparator))
     }
     val selectedEntries = remember(state.entries, selectedEntryIds) {
         state.entries.filter { it.documentId in selectedEntryIds }
@@ -1635,6 +1662,10 @@ private fun FileBrowserToolbar(
     onSaveCurrentFolderAsCet: () -> Unit
 ) {
     var pathMenuExpanded by remember { mutableStateOf(false) }
+    val pathMenuTransition = remember { MutableTransitionState(false) }
+    LaunchedEffect(pathMenuExpanded) {
+        pathMenuTransition.targetState = pathMenuExpanded
+    }
     var toolbarHeightPx by remember { mutableStateOf(0) }
     var viewMenuExpanded by remember { mutableStateOf(false) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
@@ -1865,15 +1896,6 @@ private fun FileBrowserToolbar(
                             leadingIcon = { Icon(Icons.Filled.Archive, contentDescription = null) },
                             enabled = selectionHasItems && canMutateFiles,
                             onClick = { overflowExpanded = false; onCompressSelected() })
-                        if (selectedItemsAreArchives) {
-                            DropdownMenuItem(text = { Text("Extract…") },
-                                leadingIcon = { Icon(Icons.Filled.FolderOpen, contentDescription = null) },
-                                enabled = canMutateFiles,
-                                onClick = { overflowExpanded = false; onExtractSelected() })
-                            DropdownMenuItem(text = { Text("Test") },
-                                leadingIcon = { Icon(Icons.Filled.Check, contentDescription = null) },
-                                onClick = { overflowExpanded = false; onTestSelected() })
-                        }
                         DropdownMenuItem(text = { Text("Copy") },
                             leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
                             enabled = selectionHasItems && canMutateFiles,
@@ -1894,8 +1916,15 @@ private fun FileBrowserToolbar(
                             onClick = { overflowExpanded = false; onInvertSelection() })
                         DropdownMenuItem(text = { Text("Deselect all") }, enabled = selectedCount > 0,
                             onClick = { overflowExpanded = false; onDeselectAll() })
-                    }
-                    if (!selectionMode && clipboardPresent && compactActions) {
+                        DropdownMenuItem(
+                            text = { Text("Stop multi-select") },
+                            onClick = {
+                                overflowExpanded = false
+                                onToggleMultiSelect()
+                            }
+                        )
+                    } else {
+                    if (clipboardPresent && compactActions) {
                         DropdownMenuItem(
                             text = { Text("Paste") },
                             enabled = canPaste,
@@ -1997,7 +2026,7 @@ private fun FileBrowserToolbar(
                     }
 
                     DropdownMenuItem(
-                        text = { Text(if (selectionMode) "Stop multi-select" else "Multi-select") },
+                        text = { Text("Multi-select") },
                         onClick = {
                             overflowExpanded = false
                             onToggleMultiSelect()
@@ -2041,20 +2070,28 @@ private fun FileBrowserToolbar(
                             onAbout()
                         }
                     )
+                    }
                 }
             }
         }
 
-        if (pathMenuExpanded) {
+        if (pathMenuTransition.currentState || pathMenuTransition.targetState) {
             Popup(
                 alignment = Alignment.TopStart,
                 offset = IntOffset(x = 0, y = toolbarHeightPx),
                 onDismissRequest = { pathMenuExpanded = false },
                 properties = PopupProperties(focusable = true)
             ) {
-                Surface(
+                AnimatedVisibility(
+                    visibleState = pathMenuTransition,
+                    enter = expandVertically(expandFrom = Alignment.Top, animationSpec = tween(180)) +
+                        fadeIn(animationSpec = tween(150)),
+                    exit = shrinkVertically(shrinkTowards = Alignment.Top, animationSpec = tween(140)) +
+                        fadeOut(animationSpec = tween(110))
+                ) {
+                    Surface(
                     modifier = Modifier.width(toolbarWidth),
-                    shape = RoundedCornerShape(bottomStart = 18.dp, bottomEnd = 18.dp),
+                    shape = RoundedCornerShape(16.dp),
                     color = Color(0xFF071B32),
                     tonalElevation = 0.dp,
                     shadowElevation = 8.dp,
@@ -2107,6 +2144,7 @@ private fun FileBrowserToolbar(
                         }
                     }
                 }
+                }
             }
         }
     }
@@ -2128,6 +2166,19 @@ private fun BrowserState(
     onRetry: () -> Unit,
     searchActive: Boolean
 ) {
+    val animationScopeKey = remember(
+        state.accessMode,
+        state.treeUriString,
+        state.currentPath.lastOrNull()?.documentId
+    ) {
+        listOf(
+            state.accessMode.name,
+            state.treeUriString.orEmpty(),
+            state.currentPath.lastOrNull()?.documentId.orEmpty()
+        ).joinToString("|")
+    }
+    val animatedEntryIds = remember(animationScopeKey) { mutableSetOf<String>() }
+
     Column(
         modifier = modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 4.dp)
     ) {
@@ -2229,18 +2280,55 @@ private fun BrowserState(
                     contentPadding = PaddingValues(bottom = 76.dp, top = 2.dp),
                     verticalArrangement = Arrangement.spacedBy(if (viewMode == BrowserViewMode.COMPACT) 3.dp else 5.dp)
                 ) {
-                    items(entries, key = { it.documentId }) { entry ->
-                        FileEntryRow(
-                            entry = entry,
-                            state = state,
-                            filesViewModel = filesViewModel,
-                            customFolderIconUris = customFolderIconUris,
-                            viewMode = viewMode,
-                            selected = entry.documentId in selectedEntryIds,
-                            selectionMode = selectionMode,
-                            onClick = { onOpenEntry(entry) },
-                            onLongClick = { onLongPressEntry(entry) }
-                        )
+                    itemsIndexed(
+                        items = entries,
+                        key = { _, entry -> entry.documentId },
+                        contentType = { _, entry -> if (entry.isDirectory) "directory" else "file" }
+                    ) { index, entry ->
+                        val shouldAnimate = remember(animationScopeKey, entry.documentId) {
+                            entry.documentId !in animatedEntryIds
+                        }
+                        val visibilityState = remember(animationScopeKey, entry.documentId) {
+                            MutableTransitionState(!shouldAnimate)
+                        }
+
+                        LaunchedEffect(animationScopeKey, entry.documentId) {
+                            if (shouldAnimate) {
+                                delay((index * 12).coerceAtMost(120).toLong())
+                            }
+                            animatedEntryIds.add(entry.documentId)
+                            visibilityState.targetState = true
+                        }
+
+                        AnimatedVisibility(
+                            visibleState = visibilityState,
+                            enter = if (shouldAnimate) {
+                                expandVertically(
+                                    expandFrom = Alignment.Bottom,
+                                    animationSpec = tween(180)
+                                ) + fadeIn(
+                                    animationSpec = tween(170)
+                                ) + slideInVertically(
+                                    animationSpec = tween(200),
+                                    initialOffsetY = { fullHeight -> fullHeight / 10 }
+                                )
+                            } else {
+                                EnterTransition.None
+                            },
+                            exit = ExitTransition.None
+                        ) {
+                            FileEntryRow(
+                                entry = entry,
+                                state = state,
+                                filesViewModel = filesViewModel,
+                                customFolderIconUris = customFolderIconUris,
+                                viewMode = viewMode,
+                                selected = entry.documentId in selectedEntryIds,
+                                selectionMode = selectionMode,
+                                onClick = { onOpenEntry(entry) },
+                                onLongClick = { onLongPressEntry(entry) }
+                            )
+                        }
                     }
                 }
                 Text(
