@@ -35,7 +35,7 @@ class MainActivityTest {
             composeRule.onNodeWithText("Allow access to all files").assertIsDisplayed()
             composeRule.onNodeWithText("Choose a folder instead").assertIsDisplayed()
         } else {
-            composeRule.onNodeWithText("Internal storage").assertIsDisplayed()
+            composeRule.onNodeWithText("Storage").assertIsDisplayed()
         }
     }
 }
