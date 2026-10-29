@@ -17,8 +17,8 @@ import java.util.zip.ZipOutputStream
 
 /**
  * Runs in the Shizuku UserService process, separate from JarVision's normal app process.
- * Existing-item browsing and reading are read-only; only creation of new items is supported,
- * and every operation is confined to shared internal storage.
+ * Mutations run under the active Shizuku UserService identity and are confined to shared internal
+ * storage. Each operation validates its path and reports permission failures.
  */
 @Keep
 class ShizukuStorageUserService : IShizukuStorageService.Stub() {
@@ -126,6 +126,97 @@ class ShizukuStorageUserService : IShizukuStorageService.Stub() {
         }
     }
 
+    override fun getOperationCapabilities(path: String): Bundle {
+        return try {
+            val file = checkedMutationPath(path)
+            val root = checkedMutationPath(SHARED_STORAGE_ROOT)
+            val isRoot = file.canonicalFile == root.canonicalFile
+            val parentWritable = file.parentFile?.let(::canCreateAndDeleteProbe) == true
+            Bundle().apply {
+                putBoolean(KEY_EXISTS, file.exists())
+                putBoolean(KEY_IS_DIRECTORY, file.isDirectory)
+                putBoolean(KEY_CAN_READ, file.exists() && file.canRead() && (!file.isDirectory || file.listFiles() != null))
+                putBoolean(KEY_CAN_CREATE_CHILDREN, file.isDirectory && canCreateAndDeleteProbe(file))
+                putBoolean(KEY_CAN_RENAME, file.exists() && !isRoot && parentWritable)
+                putBoolean(KEY_CAN_DELETE, file.exists() && !isRoot && parentWritable)
+            }
+        } catch (_: Exception) {
+            Bundle().apply {
+                putBoolean(KEY_EXISTS, false)
+                putBoolean(KEY_IS_DIRECTORY, false)
+                putBoolean(KEY_CAN_READ, false)
+                putBoolean(KEY_CAN_CREATE_CHILDREN, false)
+                putBoolean(KEY_CAN_RENAME, false)
+                putBoolean(KEY_CAN_DELETE, false)
+            }
+        }
+    }
+
+    override fun renameExistingItem(path: String, newName: String) {
+        validateItemName(newName)
+        val source = checkedMutationPath(path)
+        val root = checkedMutationPath(SHARED_STORAGE_ROOT)
+        if (source.canonicalFile == root.canonicalFile) {
+            throw RemoteException("The shared-storage root cannot be renamed.")
+        }
+        val parent = source.parentFile ?: throw RemoteException("The selected item has no parent folder.")
+        ensureWritableDirectory(parent)
+        val target = checkedNewTarget(parent, newName)
+        if (target.canonicalFile == source.canonicalFile) return
+        if (target.exists()) throw RemoteException("An item with that name already exists.")
+        if (!source.renameTo(target)) {
+            throw RemoteException("The Shizuku identity or Android policy denied this rename.")
+        }
+    }
+
+    override fun deleteExistingItem(path: String) {
+        val target = checkedMutationPath(path)
+        val root = checkedMutationPath(SHARED_STORAGE_ROOT)
+        if (target.canonicalFile == root.canonicalFile) {
+            throw RemoteException("The shared-storage root cannot be deleted.")
+        }
+        val parent = target.parentFile ?: throw RemoteException("The selected item has no parent folder.")
+        ensureWritableDirectory(parent)
+        validateTreeForDeletion(target)
+        deleteTreeWithoutFollowingLinks(target)
+    }
+
+    override fun openNewFileForWrite(parentPath: String, name: String): ParcelFileDescriptor {
+        val target = checkedCreationTarget(parentPath, name)
+        var created = false
+        try {
+            if (!target.createNewFile()) throw RemoteException("An item with that name already exists.")
+            created = true
+            return ParcelFileDescriptor.open(target, ParcelFileDescriptor.MODE_WRITE_ONLY)
+        } catch (error: RemoteException) {
+            throw error
+        } catch (error: Exception) {
+            if (created) runCatching { target.delete() }
+            throw RemoteException("Couldn't open the new file for writing: " + (error.message ?: "storage error."))
+        }
+    }
+
+    override fun copyExistingItem(sourcePath: String, destinationParentPath: String, destinationName: String) {
+        validateItemName(destinationName)
+        val source = checkedMutationPath(sourcePath)
+        val parent = checkedMutationPath(destinationParentPath)
+        ensureWritableDirectory(parent)
+        if (source.canonicalFile == parent.canonicalFile ||
+            (source.isDirectory && parent.canonicalPath.startsWith(source.canonicalPath + File.separator))
+        ) {
+            throw RemoteException("A folder cannot be copied into itself or one of its subfolders.")
+        }
+        val target = checkedNewTarget(parent, destinationName)
+        if (target.exists()) throw RemoteException("An item with that name already exists.")
+        try {
+            copyTreeWithoutFollowingLinks(source, target)
+        } catch (error: Exception) {
+            runCatching { deleteTreeWithoutFollowingLinks(target) }
+            if (error is RemoteException) throw error
+            throw RemoteException("Shizuku couldn't copy this item: " + (error.message ?: "storage error."))
+        }
+    }
+
     override fun getUid(): Int = Os.getuid()
 
     override fun loadFolderThumbnail(path: String): ByteArray? {
@@ -182,7 +273,7 @@ class ShizukuStorageUserService : IShizukuStorageService.Stub() {
         ) {
             throw RemoteException("Enter a valid name without folder separators.")
         }
-        val parent = checkedSharedStoragePath(parentPath)
+        val parent = checkedMutationPath(parentPath)
         if (!parent.isDirectory) throw RemoteException("The destination is not a folder.")
         val canonicalParent = parent.canonicalFile
         val requestedTarget = File(canonicalParent, name)
@@ -198,6 +289,105 @@ class ShizukuStorageUserService : IShizukuStorageService.Stub() {
             throw RemoteException("Creation is limited to direct children of shared internal storage folders.")
         }
         return target
+    }
+
+    private fun checkedMutationPath(path: String): File {
+        if (path.isBlank()) throw RemoteException("A storage path is required.")
+        val rootPath = File(SHARED_STORAGE_ROOT).absoluteFile.toPath().normalize()
+        val requested = File(path).absoluteFile.toPath().normalize()
+        if (!requested.startsWith(rootPath)) {
+            throw RemoteException("Shizuku mutations are limited to shared internal storage.")
+        }
+        var cursor = rootPath
+        for (component in rootPath.relativize(requested)) {
+            cursor = cursor.resolve(component)
+            if (Files.isSymbolicLink(cursor)) throw RemoteException("Mutating symbolic links is not supported.")
+        }
+        val canonical = try {
+            requested.toFile().canonicalFile
+        } catch (error: IOException) {
+            throw RemoteException("The selected path is invalid: " + (error.message ?: "I/O error."))
+        }
+        if (!isInsideSharedStorage(canonical.path) || !canonical.exists()) {
+            throw RemoteException("The selected item does not exist inside shared internal storage.")
+        }
+        return canonical
+    }
+
+    private fun checkedNewTarget(parent: File, name: String): File {
+        validateItemName(name)
+        val safeParent = checkedMutationPath(parent.absolutePath)
+        ensureWritableDirectory(safeParent)
+        val candidate = File(safeParent, name)
+        if (Files.isSymbolicLink(candidate.toPath())) throw RemoteException("Writing through a symbolic link is not allowed.")
+        val normalized = candidate.absoluteFile.toPath().normalize().toFile()
+        if (normalized.parentFile?.canonicalFile != safeParent.canonicalFile || !isInsideSharedStorage(normalized.canonicalPath)) {
+            throw RemoteException("The destination is not a direct child of the selected folder.")
+        }
+        return normalized
+    }
+
+    private fun validateItemName(name: String) {
+        if (name.isBlank() || name == "." || name == ".." ||
+            name.contains('/') || name.contains('\\') || name.any { it.code < 32 }
+        ) {
+            throw RemoteException("Enter a valid name without folder separators.")
+        }
+    }
+
+    /** Probes actual create/delete ability under the UserService identity, not the app process. */
+    private fun canCreateAndDeleteProbe(directory: File): Boolean {
+        if (!directory.isDirectory) return false
+        var probe: File? = null
+        return try {
+            probe = File.createTempFile(".jarvision-capability-", ".tmp", directory)
+            probe.delete() && !probe.exists()
+        } catch (_: Exception) {
+            false
+        } finally {
+            probe?.takeIf { it.exists() }?.delete()
+        }
+    }
+
+    private fun ensureWritableDirectory(directory: File) {
+        if (!canCreateAndDeleteProbe(directory)) {
+            throw RemoteException("The active Shizuku identity cannot create and remove items in this folder.")
+        }
+    }
+
+    private fun copyTreeWithoutFollowingLinks(source: File, target: File) {
+        val safeSource = checkedMutationPath(source.absolutePath)
+        if (safeSource.isDirectory) {
+            if (!target.mkdir()) throw RemoteException("Couldn't create the destination folder.")
+            val children = safeSource.listFiles() ?: throw RemoteException("Shizuku cannot list the source folder.")
+            children.forEach { child ->
+                if (Files.isSymbolicLink(child.toPath())) throw RemoteException("A symbolic link was found; copy was stopped.")
+                copyTreeWithoutFollowingLinks(child, checkedNewTarget(target, child.name))
+            }
+        } else {
+            safeSource.inputStream().buffered().use { input ->
+                target.outputStream().buffered().use { output -> input.copyTo(output) }
+            }
+        }
+        target.setLastModified(safeSource.lastModified())
+    }
+
+    private fun validateTreeForDeletion(target: File) {
+        val safe = checkedMutationPath(target.absolutePath)
+        if (Files.isSymbolicLink(safe.toPath())) throw RemoteException("Deleting symbolic links is not supported.")
+        if (safe.isDirectory) {
+            val children = safe.listFiles() ?: throw RemoteException("Shizuku cannot list this folder for deletion.")
+            children.forEach { validateTreeForDeletion(it) }
+        }
+    }
+
+    private fun deleteTreeWithoutFollowingLinks(target: File) {
+        if (Files.isSymbolicLink(target.toPath())) throw RemoteException("Deleting symbolic links is not supported.")
+        if (target.isDirectory) {
+            val children = target.listFiles() ?: throw RemoteException("Shizuku cannot list this folder for deletion.")
+            children.forEach { child -> deleteTreeWithoutFollowingLinks(checkedMutationPath(child.absolutePath)) }
+        }
+        if (!target.delete()) throw RemoteException("The Shizuku identity or Android policy denied this delete.")
     }
 
     private val canonicalSharedStorageRoot: String by lazy {
@@ -222,6 +412,11 @@ class ShizukuStorageUserService : IShizukuStorageService.Stub() {
         const val KEY_SIZE_BYTES = "sizeBytes"
         const val KEY_LAST_MODIFIED = "lastModifiedMillis"
         const val KEY_ABSOLUTE_PATH = "absolutePath"
+        const val KEY_EXISTS = "exists"
+        const val KEY_CAN_READ = "canRead"
+        const val KEY_CAN_CREATE_CHILDREN = "canCreateChildren"
+        const val KEY_CAN_RENAME = "canRename"
+        const val KEY_CAN_DELETE = "canDelete"
         const val MAX_FOLDER_THUMBNAIL_BYTES = 1L * 1024L * 1024L
         val FOLDER_THUMBNAIL_NAMES = listOf("folder.jpg", "folder.jpeg", "folder.png", "folder.webp",
             ".foldericon", ".foldericon.jpg", "cover.jpg", "cover.png", "thumbnail.jpg")

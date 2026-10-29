@@ -11,6 +11,11 @@ interface IShizukuStorageService {
     void createDirectory(String parentPath, String name) = 5;
     void createEmptyFile(String parentPath, String name) = 6;
     void createEmptyZip(String parentPath, String name) = 7;
+    Bundle getOperationCapabilities(String path) = 8;
+    void renameExistingItem(String path, String newName) = 9;
+    void deleteExistingItem(String path) = 10;
+    ParcelFileDescriptor openNewFileForWrite(String parentPath, String name) = 11;
+    void copyExistingItem(String sourcePath, String destinationParentPath, String destinationName) = 12;
 
     void destroy() = 16777114;
 }

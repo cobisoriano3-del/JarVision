@@ -310,6 +310,45 @@ class ShizukuStorageAdapter private constructor(context: Context) {
         callCreateOperation("ZIP archive") { it.createEmptyZip(parentPath, name) }
     }
 
+    fun getOperationCapabilities(path: String): Bundle = try {
+        requireService().getOperationCapabilities(path)
+    } catch (error: RemoteException) {
+        throw IOException(error.message ?: "Couldn't query Shizuku file capabilities.", error)
+    }
+
+    fun renameExistingItem(path: String, newName: String) {
+        try {
+            requireService().renameExistingItem(path, newName)
+        } catch (error: RemoteException) {
+            throw IOException(error.message ?: "Shizuku couldn't rename this item.", error)
+        }
+    }
+
+    fun deleteExistingItem(path: String) {
+        try {
+            requireService().deleteExistingItem(path)
+        } catch (error: RemoteException) {
+            throw IOException(error.message ?: "Shizuku couldn't delete this item.", error)
+        }
+    }
+
+    fun openNewFileForWrite(parentPath: String, name: String): java.io.OutputStream {
+        val descriptor = try {
+            requireService().openNewFileForWrite(parentPath, name)
+        } catch (error: RemoteException) {
+            throw IOException(error.message ?: "Shizuku couldn't create the destination file.", error)
+        }
+        return ParcelFileDescriptor.AutoCloseOutputStream(descriptor)
+    }
+
+    fun copyExistingItem(sourcePath: String, destinationParentPath: String, destinationName: String) {
+        try {
+            requireService().copyExistingItem(sourcePath, destinationParentPath, destinationName)
+        } catch (error: RemoteException) {
+            throw IOException(error.message ?: "Shizuku couldn't copy this item.", error)
+        }
+    }
+
     /** Opens a read-only stream for archive validation or explicit sharing. */
     fun openReadOnlyInputStream(path: String): InputStream {
         val service = requireService()
@@ -425,9 +464,14 @@ class ShizukuStorageAdapter private constructor(context: Context) {
     companion object {
         const val PREFERENCES_NAME = "jarvision_storage"
         const val KEY_PREFERRED_ACCESS_MODE = "preferred_access_mode"
+        const val KEY_EXISTS = "exists"
+        const val KEY_CAN_READ = "canRead"
+        const val KEY_CAN_CREATE_CHILDREN = "canCreateChildren"
+        const val KEY_CAN_RENAME = "canRename"
+        const val KEY_CAN_DELETE = "canDelete"
         const val REQUEST_PERMISSION_CODE = 5721
         const val MIN_USER_SERVICE_VERSION = 10
-        const val USER_SERVICE_VERSION = 2
+        const val USER_SERVICE_VERSION = 3
         const val KEY_DOCUMENT_ID = "documentId"
         const val KEY_DISPLAY_NAME = "displayName"
         const val KEY_MIME_TYPE = "mimeType"
