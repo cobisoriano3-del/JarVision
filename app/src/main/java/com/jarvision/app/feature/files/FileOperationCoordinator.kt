@@ -534,7 +534,7 @@ class FileOperationCoordinator(
         if (mode != StorageAccessMode.SHARED_STORAGE && mode != StorageAccessMode.DOCUMENT_TREE) {
             throw IOException("Extraction is disabled in read-only Shizuku mode.")
         }
-        if (archive.isDirectory || !archive.displayName.lowercase(Locale.ROOT).endsWith(".zip")) {
+        if (archive.isDirectory || !isZipContainerName(archive.displayName)) {
             throw IOException("Only ZIP files can be extracted.")
         }
         val stage = File(context.cacheDir, "jarvision-zip-here-" + System.nanoTime())
@@ -596,7 +596,7 @@ class FileOperationCoordinator(
         if (mode != StorageAccessMode.SHARED_STORAGE && mode != StorageAccessMode.DOCUMENT_TREE) {
             throw IOException("Extraction is disabled in read-only Shizuku mode.")
         }
-        if (archive.isDirectory || !archive.displayName.lowercase(Locale.ROOT).endsWith(".zip")) {
+        if (archive.isDirectory || !isZipContainerName(archive.displayName)) {
             throw IOException("Only ZIP files can be extracted.")
         }
 
@@ -638,6 +638,70 @@ class FileOperationCoordinator(
         } catch (error: Exception) {
             createdSharedFolder?.let { runCatching { it.deleteRecursively() } }
             createdSafFolder?.let { runCatching { DocumentsContract.deleteDocument(resolver, it) } }
+            throw error
+        } finally {
+            stage.deleteRecursively()
+        }
+    }
+
+    /**
+     * Extract a ZIP-compatible container from the current storage backend into a user-selected
+     * SAF destination. Source and destination scopes stay separate; this also permits a read-only
+     * Shizuku source to extract into an explicitly granted writable folder.
+     */
+    fun extractZipToDestination(
+        sourceMode: StorageAccessMode,
+        sourceTreeUriString: String?,
+        archive: StorageEntry,
+        destinationTreeUriString: String,
+        destinationParentDocumentId: String
+    ): String {
+        if (sourceMode == StorageAccessMode.NONE) {
+            throw IOException("Choose a storage location first.")
+        }
+        if (archive.isDirectory || !isZipContainerName(archive.displayName)) {
+            throw IOException("This file type is not a supported ZIP container.")
+        }
+
+        val destinationTreeUri = parseTreeUri(destinationTreeUriString)
+        requireWriteGrant(destinationTreeUri)
+        val destinationParent = saf.getDocument(destinationTreeUri, destinationParentDocumentId)
+            ?: throw IOException("The chosen destination folder is no longer available.")
+        if (!destinationParent.isDirectory) {
+            throw IOException("Choose a folder as the extraction destination.")
+        }
+
+        val stage = File(context.cacheDir, "jarvision-zip-destination-" + System.nanoTime())
+        if (!stage.mkdirs()) throw IOException("Couldn't prepare a temporary extraction folder.")
+        var createdFolder: Uri? = null
+        val createdItems = mutableListOf<Uri>()
+        try {
+            openInputStream(sourceMode, sourceTreeUriString, archive).use {
+                ZipArchiveSupport.extract(it, stage)
+            }
+            val desiredName = archive.displayName.substringBeforeLast('.', archive.displayName)
+                .ifBlank { "Extracted" }
+            val targetName = uniqueFolderName(
+                StorageAccessMode.DOCUMENT_TREE,
+                destinationTreeUriString,
+                destinationParentDocumentId,
+                null,
+                desiredName
+            )
+            val target = DocumentsContract.createDocument(
+                resolver,
+                documentUri(destinationTreeUri, destinationParentDocumentId),
+                DocumentsContract.Document.MIME_TYPE_DIR,
+                targetName
+            ) ?: throw IOException("The storage provider couldn't create the extraction folder.")
+            createdFolder = target
+            copyLocalDirectoryToSaf(stage, target, createdItems)
+            return "Extracted to " + targetName + "/"
+        } catch (error: Exception) {
+            createdItems.asReversed().forEach {
+                runCatching { DocumentsContract.deleteDocument(resolver, it) }
+            }
+            createdFolder?.let { runCatching { DocumentsContract.deleteDocument(resolver, it) } }
             throw error
         } finally {
             stage.deleteRecursively()
@@ -857,6 +921,11 @@ class FileOperationCoordinator(
 
     private fun documentUri(treeUri: Uri, documentId: String): Uri =
         DocumentsContract.buildDocumentUriUsingTree(treeUri, documentId)
+
+    private fun isZipContainerName(name: String): Boolean {
+        val extension = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        return extension in setOf("zip", "apk", "apks", "xapk", "aab", "jar", "cbz", "epub")
+    }
 
     private fun validateName(name: String) {
         if (name.isBlank() || name == "." || name == ".." ||

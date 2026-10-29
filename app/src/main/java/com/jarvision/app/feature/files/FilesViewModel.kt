@@ -20,6 +20,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -110,8 +111,54 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
     val customFolderIconUris: StateFlow<Map<String, String>> = mutableCustomFolderIconUris.asStateFlow()
 
     private var operationJob: Job? = null
+    private var shizukuReconnectAttempted = false
 
     init {
+        viewModelScope.launch {
+            shizukuStorageAdapter.status.collect { status ->
+                if (preferredAccessMode() != StorageAccessMode.SHIZUKU_STORAGE) {
+                    shizukuReconnectAttempted = false
+                    return@collect
+                }
+
+                val current = mutableUiState.value
+                if (status.isConnected) {
+                    shizukuReconnectAttempted = false
+                    if (
+                        current.accessMode != StorageAccessMode.SHIZUKU_STORAGE ||
+                        current.currentPath.isEmpty() ||
+                        current.errorMessage != null
+                    ) {
+                        openShizukuRoot()
+                    }
+                } else if (
+                    status.binderAvailable &&
+                    status.permissionGranted &&
+                    !status.isBinding &&
+                    !shizukuReconnectAttempted
+                ) {
+                    shizukuReconnectAttempted = true
+                    shizukuStorageAdapter.reconnectIfAuthorized()
+                } else {
+                    if (!status.binderAvailable) shizukuReconnectAttempted = false
+                    val message = when {
+                        status.isBinding -> null
+                        !status.binderAvailable ->
+                            "Shizuku is not running. Start its service to reconnect."
+                        !status.permissionGranted ->
+                            "Grant JarVision permission in Shizuku to reconnect."
+                        else -> status.message
+                    }
+                    mutableUiState.value = current.copy(
+                        accessMode = StorageAccessMode.SHIZUKU_STORAGE,
+                        treeUriString = null,
+                        entries = emptyList(),
+                        isLoading = status.isBinding,
+                        errorMessage = message
+                    )
+                }
+            }
+        }
         refreshAccess()
     }
 
@@ -119,8 +166,90 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
      * Re-check this when returning from system Settings or a runtime permission prompt.
      * Broad access is preferred on first launch; an existing folder-only session is preserved.
      */
+    private fun preferredAccessMode(): StorageAccessMode? =
+        preferences.getString(ShizukuStorageAdapter.KEY_PREFERRED_ACCESS_MODE, null)
+            ?.let { runCatching { StorageAccessMode.valueOf(it) }.getOrNull() }
+
+    fun preferShizukuStorage() {
+        savePreferredAccessMode(StorageAccessMode.SHIZUKU_STORAGE)
+    }
+
+    private fun savePreferredAccessMode(mode: StorageAccessMode) {
+        preferences.edit()
+            .putString(ShizukuStorageAdapter.KEY_PREFERRED_ACCESS_MODE, mode.name)
+            .apply()
+    }
+
     fun refreshAccess() {
         val current = mutableUiState.value
+        when (preferredAccessMode()) {
+            StorageAccessMode.SHIZUKU_STORAGE -> {
+                val status = shizukuStorageAdapter.status.value
+                if (status.isConnected) {
+                    if (
+                        current.accessMode == StorageAccessMode.SHIZUKU_STORAGE &&
+                        current.currentPath.isNotEmpty() &&
+                        current.errorMessage == null
+                    ) {
+                        return
+                    }
+                    openShizukuRoot()
+                    return
+                }
+
+                if (
+                    status.binderAvailable &&
+                    status.permissionGranted &&
+                    !status.isBinding &&
+                    !shizukuReconnectAttempted
+                ) {
+                    shizukuReconnectAttempted = true
+                    shizukuStorageAdapter.reconnectIfAuthorized()
+                }
+                val message = when {
+                    status.isBinding -> null
+                    !status.binderAvailable ->
+                        "Shizuku is not running. Start its service to reconnect."
+                    !status.permissionGranted ->
+                        "Grant JarVision permission in Shizuku to reconnect."
+                    else -> status.message
+                }
+                mutableUiState.value = current.copy(
+                    accessMode = StorageAccessMode.SHIZUKU_STORAGE,
+                    treeUriString = null,
+                    entries = emptyList(),
+                    isLoading = status.isBinding,
+                    errorMessage = message
+                )
+                return
+            }
+            StorageAccessMode.DOCUMENT_TREE -> {
+                val savedTreeUri = preferences.getString(KEY_TREE_URI, null)
+                if (savedTreeUri != null && hasPersistedTreeGrant(savedTreeUri)) {
+                    if (
+                        current.accessMode == StorageAccessMode.DOCUMENT_TREE &&
+                        current.treeUriString == savedTreeUri &&
+                        current.currentPath.isNotEmpty()
+                    ) return
+                    restoreTree(savedTreeUri)
+                    return
+                }
+            }
+            StorageAccessMode.SHARED_STORAGE -> {
+                if (hasSharedStorageAccess()) {
+                    if (
+                        current.accessMode == StorageAccessMode.SHARED_STORAGE &&
+                        current.currentPath.isNotEmpty()
+                    ) {
+                        refresh()
+                    } else {
+                        loadSharedStorageRoot()
+                    }
+                    return
+                }
+            }
+            StorageAccessMode.NONE, null -> Unit
+        }
         if (
             current.accessMode == StorageAccessMode.SHIZUKU_STORAGE &&
             shizukuStorageAdapter.status.value.isConnected &&
@@ -176,7 +305,10 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
                     treeUri,
                     Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 )
-                preferences.edit().putString(KEY_TREE_URI, treeUri.toString()).apply()
+                preferences.edit()
+                    .putString(KEY_TREE_URI, treeUri.toString())
+                    .putString(ShizukuStorageAdapter.KEY_PREFERRED_ACCESS_MODE, StorageAccessMode.DOCUMENT_TREE.name)
+                    .apply()
                 openTreeAndLoadRoot(treeUri.toString())
             } catch (cancelled: CancellationException) {
                 throw cancelled
@@ -280,6 +412,7 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun loadSharedStorageRoot() {
+        savePreferredAccessMode(StorageAccessMode.SHARED_STORAGE)
         operationJob?.cancel()
         mutableUiState.value = FilesUiState(
             accessMode = StorageAccessMode.SHARED_STORAGE,
@@ -294,7 +427,7 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     FolderLocation(
                         documentId = root.absolutePath,
-                        displayName = "Internal storage",
+                        displayName = "Storage",
                         absolutePath = root.absolutePath
                     )
                 }
@@ -331,9 +464,10 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val rootPath = shizukuStorageAdapter.sharedStorageRootPath
+        savePreferredAccessMode(StorageAccessMode.SHIZUKU_STORAGE)
         val rootLocation = FolderLocation(
             documentId = rootPath,
-            displayName = "Shared storage (Shizuku)",
+            displayName = "Storage",
             absolutePath = rootPath
         )
         operationJob?.cancel()
@@ -461,6 +595,39 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
         return true
     }
 
+    fun saveEntryAsFavorite(entry: StorageEntry): Boolean {
+        if (!entry.isDirectory) return false
+        val state = mutableUiState.value
+        if (state.accessMode == StorageAccessMode.NONE) return false
+
+        val location = when (state.accessMode) {
+            StorageAccessMode.SHARED_STORAGE, StorageAccessMode.SHIZUKU_STORAGE -> {
+                val path = entry.absolutePath ?: return false
+                FolderLocation(entry.documentId, entry.displayName, path)
+            }
+            StorageAccessMode.DOCUMENT_TREE -> FolderLocation(entry.documentId, entry.displayName)
+            StorageAccessMode.NONE -> return false
+        }
+
+        if (mutableCetShortcuts.value.any {
+                it.accessMode == state.accessMode &&
+                    it.treeUriString == state.treeUriString &&
+                    it.path.lastOrNull()?.documentId == entry.documentId
+            }) return false
+
+        val updated = mutableCetShortcuts.value + QuickAccessLocation(
+            id = UUID.randomUUID().toString(),
+            label = entry.displayName.ifBlank { "Favorite folder" },
+            accessMode = state.accessMode,
+            treeUriString = state.treeUriString,
+            path = state.currentPath + location,
+            isCustom = true
+        )
+        mutableCetShortcuts.value = updated
+        writeCetShortcuts(updated)
+        return true
+    }
+
     fun removeCetShortcut(id: String) {
         val updated = mutableCetShortcuts.value.filterNot { it.id == id }
         mutableCetShortcuts.value = updated
@@ -573,7 +740,7 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private companion object {
-        const val PREFERENCES_NAME = "jarvision_storage"
+        const val PREFERENCES_NAME = ShizukuStorageAdapter.PREFERENCES_NAME
         const val KEY_TREE_URI = "selected_tree_uri"
         const val KEY_CET_SHORTCUTS = "custom_easy_tabs_v1"
         const val KEY_CUSTOM_FOLDER_ICONS = "custom_folder_icons_v1"

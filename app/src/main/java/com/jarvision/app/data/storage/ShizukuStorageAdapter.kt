@@ -202,7 +202,42 @@ class ShizukuStorageAdapter private constructor(context: Context) {
         }
     }
 
+    fun reconnectIfAuthorized() {
+        if (remoteService != null || binding) return
+
+        val binderAvailable = runCatching { Shizuku.pingBinder() }.getOrDefault(false)
+        if (!binderAvailable) {
+            refreshBinderStatus()
+            return
+        }
+        if (Shizuku.isPreV11()) {
+            mutableStatus.value = mutableStatus.value.copy(
+                binderAvailable = true,
+                isBinding = false,
+                isConnected = false,
+                message = "This Shizuku version is too old. Update Shizuku before reconnecting."
+            )
+            return
+        }
+
+        val permissionGranted = runCatching {
+            Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED
+        }.getOrDefault(false)
+        if (!permissionGranted) {
+            refreshBinderStatus()
+            return
+        }
+        bindUserService()
+    }
+
     fun disconnect() {
+        // A deliberate disconnect is different from Binder loss. Clear the saved preference
+        // so the ViewModel doesn't interpret the user's action as a reconnect request.
+        applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+            .edit()
+            .remove(KEY_PREFERRED_ACCESS_MODE)
+            .apply()
+
         val wasBinding = binding
         binding = false
         remoteService = null
@@ -388,6 +423,8 @@ class ShizukuStorageAdapter private constructor(context: Context) {
     }
 
     companion object {
+        const val PREFERENCES_NAME = "jarvision_storage"
+        const val KEY_PREFERRED_ACCESS_MODE = "preferred_access_mode"
         const val REQUEST_PERMISSION_CODE = 5721
         const val MIN_USER_SERVICE_VERSION = 10
         const val USER_SERVICE_VERSION = 2
