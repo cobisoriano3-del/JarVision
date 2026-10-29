@@ -74,6 +74,9 @@ import com.jarvision.app.feature.screens.DualSpaceScreen
 import com.jarvision.app.feature.screens.EditorScreen
 import com.jarvision.app.feature.screens.ProjectsScreen
 import com.jarvision.app.feature.screens.SettingsScreen
+import com.jarvision.app.feature.projects.ProjectsViewModel
+import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.compose.runtime.collectAsState
 import com.jarvision.app.feature.tools.ToolsScreen
 
 private object Routes {
@@ -106,6 +109,11 @@ fun JarVisionApp() {
         MainTab(Routes.PROJECTS, "Projects", Icons.Filled.Workspaces),
         MainTab(Routes.TOOLS, "Tools", Icons.Filled.Build)
     )
+
+    val projectsViewModel: ProjectsViewModel = viewModel()
+    val projects by projectsViewModel.projects.collectAsState()
+    val creatingProject by projectsViewModel.isCreating.collectAsState()
+    val projectError by projectsViewModel.errorMessage.collectAsState()
 
     var searchExpanded by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
@@ -356,7 +364,9 @@ fun JarVisionApp() {
                     onOpenSettings = { navigateTo(Routes.SETTINGS) }
                 )
             }
-            composable(Routes.PROJECTS) { ProjectsScreen(searchQuery = searchQuery, gridView = gridView) }
+            composable(Routes.PROJECTS) {
+                ProjectsScreen(searchQuery, gridView, projects, creatingProject, projectError, projectsViewModel::createProject)
+            }
             composable(Routes.TOOLS) {
                 ToolsScreen(
                     onOpenEditor = { navigateTo(Routes.EDITOR) },

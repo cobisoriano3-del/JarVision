@@ -28,6 +28,19 @@ import androidx.compose.material.icons.filled.ViewWeek
 import androidx.compose.material.icons.filled.Workspaces
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.Icon
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.getValue
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.clickable
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -42,161 +55,114 @@ import androidx.compose.ui.unit.dp
 import com.jarvision.app.ui.components.FeatureStatusScreen
 
 @Composable
-fun ProjectsScreen(searchQuery: String = "", gridView: Boolean = false) {
+fun ProjectsScreen(
+    searchQuery: String = "",
+    gridView: Boolean = false,
+    projects: List<com.jarvision.app.data.projects.Project> = emptyList(),
+    isCreating: Boolean = false,
+    errorMessage: String? = null,
+    onCreateProject: (String) -> Unit = {}
+) {
+    var showCreateDialog by remember { mutableStateOf(false) }
+    var projectName by remember { mutableStateOf("") }
     val searching = searchQuery.isNotBlank()
+    val visibleProjects = projects.filter { it.name.contains(searchQuery, ignoreCase = true) }
     val emblemSize = if (gridView) 116.dp else 138.dp
     val folderIconSize = if (gridView) 68.dp else 84.dp
     val badgeSize = if (gridView) 30.dp else 36.dp
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(
-                Brush.verticalGradient(
-                    listOf(Color(0xFF020B18), Color(0xFF03152A), Color(0xFF020B18))
-                )
-            )
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 18.dp)
-        ) {
+    Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0xFF020B18), Color(0xFF03152A), Color(0xFF020B18))))) {
+        Column(Modifier.fillMaxSize().padding(horizontal = 18.dp)) {
             if (!searching) {
                 Spacer(Modifier.height(14.dp))
                 Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(20.dp),
-                    color = Color(0xFF091D33),
-                    border = BorderStroke(1.dp, Color(0xFF284967).copy(alpha = 0.9f)),
-                    shadowElevation = 1.dp
+                    modifier = Modifier.fillMaxWidth().clickable { showCreateDialog = true },
+                    shape = RoundedCornerShape(20.dp), color = Color(0xFF091D33),
+                    border = BorderStroke(1.dp, Color(0xFF284967).copy(alpha = 0.9f)), shadowElevation = 1.dp
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .background(Color(0xFF091D33))
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Surface(
-                            modifier = Modifier.size(56.dp),
-                            shape = RoundedCornerShape(17.dp),
-                            color = Color(0xFF091B30),
-                            border = BorderStroke(1.dp, Color(0xFF254260)),
-                            shadowElevation = 0.dp
-                        ) {
+                    Row(Modifier.background(Color(0xFF091D33)).padding(horizontal = 12.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Surface(Modifier.size(56.dp), shape = RoundedCornerShape(17.dp), color = Color(0xFF091B30), border = BorderStroke(1.dp, Color(0xFF254260))) {
                             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                                Icon(
-                                    imageVector = Icons.Filled.Add,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(32.dp),
-                                    tint = Color(0xFF278BEE)
-                                )
+                                Icon(Icons.Filled.Add, null, Modifier.size(32.dp), tint = Color(0xFF278BEE))
                             }
                         }
                         Spacer(Modifier.width(12.dp))
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(3.dp)
-                        ) {
-                            Text(
-                                text = "Create Project",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.SemiBold,
-                                color = Color(0xFFF4F7FF),
-                                maxLines = 1
-                            )
-                            Text(
-                                text = "Start a new project.",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = Color(0xFFA6BBD5),
-                                maxLines = 1
-                            )
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text("Create Project", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, color = Color(0xFFF4F7FF), maxLines = 1)
+                            Text("Start a new project.", style = MaterialTheme.typography.bodyMedium, color = Color(0xFFA6BBD5), maxLines = 1)
                         }
                         Spacer(Modifier.width(8.dp))
-                        Icon(
-                            imageVector = Icons.Filled.ArrowForwardIos,
-                            contentDescription = null,
-                            modifier = Modifier.size(17.dp),
-                            tint = Color(0xFF459DF5)
-                        )
+                        Icon(Icons.Filled.ArrowForwardIos, "Create project", Modifier.size(17.dp), tint = Color(0xFF459DF5))
                     }
                 }
-                Spacer(Modifier.height(14.dp))
-                ProjectsDivider()
+                Spacer(Modifier.height(14.dp)); ProjectsDivider()
+            } else Spacer(Modifier.height(8.dp))
+            if (visibleProjects.isNotEmpty()) {
+                if (gridView) {
+                    androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
+                        columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(minSize = 140.dp),
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentPadding = PaddingValues(vertical = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) { items(visibleProjects, key = { it.id }) { ProjectCard(it) } }
+                } else {
+                    LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        items(visibleProjects, key = { it.id }) { ProjectCard(it) }
+                    }
+                }
             } else {
-                Spacer(Modifier.height(8.dp))
-            }
-
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Surface(
-                        modifier = Modifier.size(emblemSize),
-                        shape = CircleShape,
-                        color = Color(0xFF0A1C33),
-                        border = BorderStroke(1.dp, Color(0xFF122D49)),
-                        shadowElevation = 0.dp
-                    ) {
-                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                            Icon(
-                                imageVector = Icons.Outlined.FolderOpen,
-                                contentDescription = null,
-                                modifier = Modifier.size(folderIconSize),
-                                tint = Color(0xFF369AFF)
-                            )
-                            Surface(
-                                modifier = Modifier
-                                    .align(Alignment.BottomEnd)
-                                    .padding(if (gridView) 13.dp else 15.dp)
-                                    .size(badgeSize),
-                                shape = CircleShape,
-                                color = Color(0xFF087FF0),
-                                border = BorderStroke(1.dp, Color(0xFF0D2D4D)),
-                                shadowElevation = 1.dp
-                            ) {
-                                Box(contentAlignment = Alignment.Center) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Add,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(if (gridView) 19.dp else 23.dp),
-                                        tint = Color(0xFF061A2D)
-                                    )
+                Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+                        Surface(Modifier.size(emblemSize), shape = CircleShape, color = Color(0xFF0A1C33), border = BorderStroke(1.dp, Color(0xFF122D49))) {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Icon(Icons.Outlined.FolderOpen, null, Modifier.size(folderIconSize), tint = Color(0xFF369AFF))
+                                Surface(Modifier.align(Alignment.BottomEnd).padding(if (gridView) 13.dp else 15.dp).size(badgeSize), shape = CircleShape, color = Color(0xFF087FF0), border = BorderStroke(1.dp, Color(0xFF0D2D4D))) {
+                                    Box(contentAlignment = Alignment.Center) { Icon(Icons.Filled.Add, null, Modifier.size(if (gridView) 19.dp else 23.dp), tint = Color(0xFF061A2D)) }
                                 }
                             }
                         }
+                        Spacer(Modifier.height(24.dp))
+                        Text(if (searching) "No projects found" else "Projects", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold, color = Color(0xFFF4F7FF), textAlign = TextAlign.Center)
+                        Spacer(Modifier.height(8.dp))
+                        Text(when { searching -> "Try another search or clear the search field."; errorMessage != null -> errorMessage; isCreating -> "Creating project…"; else -> "Your projects will appear here." }, style = MaterialTheme.typography.bodyLarge, color = if (errorMessage != null) Color(0xFFFF9A9A) else Color(0xFFA7BEDB), textAlign = TextAlign.Center)
                     }
-                    Spacer(Modifier.height(24.dp))
-                    Text(
-                        text = if (searching) "No projects found" else "Projects",
-                        style = MaterialTheme.typography.headlineMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Color(0xFFF4F7FF),
-                        textAlign = TextAlign.Center
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        text = if (searching) {
-                            "Try another search or clear the search field."
-                        } else {
-                            "Your projects will appear here."
-                        },
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = Color(0xFFA7BEDB),
-                        textAlign = TextAlign.Center
-                    )
                 }
             }
+            ProjectsDivider(); Spacer(Modifier.height(8.dp))
+        }
+    }
+    if (showCreateDialog) AlertDialog(
+        onDismissRequest = { if (!isCreating) { showCreateDialog = false; projectName = "" } },
+        containerColor = Color(0xFF091D33),
+        title = { Text("Create project", color = Color(0xFFF4F7FF), fontWeight = FontWeight.SemiBold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Choose a name for your project workspace.", color = Color(0xFFA7BEDB))
+                OutlinedTextField(
+                    value = projectName, onValueChange = { projectName = it }, singleLine = true, enabled = !isCreating,
+                    label = { Text("Project name") }, placeholder = { Text("My project") },
+                    colors = OutlinedTextFieldDefaults.colors(focusedTextColor = Color.White, unfocusedTextColor = Color.White, focusedBorderColor = Color(0xFF278BEE), unfocusedBorderColor = Color(0xFF284967), focusedLabelColor = Color(0xFF65B7FF), unfocusedLabelColor = Color(0xFFA7BEDB), cursorColor = Color(0xFF65B7FF))
+                )
+                if (errorMessage != null) Text(errorMessage, color = Color(0xFFFF9A9A), style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = { TextButton(enabled = !isCreating && projectName.isNotBlank(), onClick = { onCreateProject(projectName); showCreateDialog = false; projectName = "" }) { Text(if (isCreating) "Creating…" else "Create", color = Color(0xFF65B7FF)) } },
+        dismissButton = { TextButton(enabled = !isCreating, onClick = { showCreateDialog = false; projectName = "" }) { Text("Cancel", color = Color(0xFFA7BEDB)) } }
+    )
+}
 
-            ProjectsDivider()
-            Spacer(Modifier.height(8.dp))
+@Composable
+private fun ProjectCard(project: com.jarvision.app.data.projects.Project) {
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = Color(0xFF091D33), border = BorderStroke(1.dp, Color(0xFF284967).copy(alpha = 0.8f))) {
+        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(Modifier.size(54.dp), shape = RoundedCornerShape(14.dp), color = Color(0xFF0A2745), border = BorderStroke(1.dp, Color(0xFF20476B))) {
+                Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.FolderOpen, null, Modifier.size(28.dp), tint = Color(0xFF369AFF)) }
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(project.name, color = Color(0xFFF4F7FF), fontWeight = FontWeight.SemiBold, maxLines = 1)
+                Spacer(Modifier.height(3.dp))
+                Text("Project workspace", color = Color(0xFFA7BEDB), style = MaterialTheme.typography.bodySmall, maxLines = 1)
+            }
         }
     }
 }
