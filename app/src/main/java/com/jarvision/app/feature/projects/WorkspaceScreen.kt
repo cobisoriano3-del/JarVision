@@ -124,9 +124,11 @@ fun WorkspaceScreen(
 
     var editingEntry by remember { mutableStateOf<ProjectWorkspaceEntry?>(null) }
     var editorText by remember { mutableStateOf("") }
+    var originalEditorText by remember { mutableStateOf("") }
     var editorLoading by remember { mutableStateOf(false) }
     var editorSaving by remember { mutableStateOf(false) }
     var editorError by remember { mutableStateOf<String?>(null) }
+    var showDiscardEditorChanges by remember { mutableStateOf(false) }
 
     LaunchedEffect(project.id) {
         multiSelect = false
@@ -163,18 +165,31 @@ fun WorkspaceScreen(
         } else {
             editingEntry = entry
             editorText = ""
+            originalEditorText = ""
             editorLoading = true
             editorSaving = false
             editorError = null
+            showDiscardEditorChanges = false
             scope.launch {
                 try {
                     editorText = viewModel.readTextFile(project.id, entry.relativePath)
+                    originalEditorText = editorText
                 } catch (error: Exception) {
                     editorError = error.message ?: "Could not open this text file."
                 } finally {
                     editorLoading = false
                 }
             }
+        }
+    }
+
+    fun requestCloseEditor() {
+        if (editorSaving) return
+        if (!editorLoading && editorError == null && editorText != originalEditorText) {
+            showDiscardEditorChanges = true
+        } else {
+            editingEntry = null
+            editorError = null
         }
     }
 
@@ -515,12 +530,7 @@ fun WorkspaceScreen(
 
     editingEntry?.let { entry ->
         AlertDialog(
-            onDismissRequest = {
-                if (!editorSaving) {
-                    editingEntry = null
-                    editorError = null
-                }
-            },
+            onDismissRequest = { requestCloseEditor() },
             containerColor = WorkspacePalette.Card,
             title = {
                 Text(
@@ -550,7 +560,8 @@ fun WorkspaceScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(min = 220.dp, max = 420.dp),
-                            enabled = !editorSaving && editorError == null,
+                            enabled = !editorSaving && !editorLoading &&
+                                (editorError == null || editorText != originalEditorText),
                             maxLines = 16,
                             colors = workspaceTextFieldColors()
                         )
@@ -564,12 +575,14 @@ fun WorkspaceScreen(
             },
             confirmButton = {
                 TextButton(
-                    enabled = !editorLoading && !editorSaving && editorError == null,
+                    enabled = !editorLoading && !editorSaving &&
+                        (editorError == null || editorText != originalEditorText),
                     onClick = {
                         editorSaving = true
                         scope.launch {
                             try {
                                 viewModel.saveTextFile(project.id, entry.relativePath, editorText)
+                                originalEditorText = editorText
                                 editingEntry = null
                                 editorError = null
                             } catch (error: Exception) {
@@ -586,12 +599,41 @@ fun WorkspaceScreen(
             dismissButton = {
                 TextButton(
                     enabled = !editorSaving,
+                    onClick = { requestCloseEditor() }
+                ) {
+                    Text("Close", color = WorkspacePalette.Muted)
+                }
+            }
+        )
+    }
+
+    if (showDiscardEditorChanges) {
+        AlertDialog(
+            onDismissRequest = { showDiscardEditorChanges = false },
+            containerColor = WorkspacePalette.Card,
+            title = {
+                Text("Discard unsaved changes?", color = WorkspacePalette.Text, fontWeight = FontWeight.SemiBold)
+            },
+            text = {
+                Text(
+                    "Your edits to this text file have not been saved.",
+                    color = WorkspacePalette.Muted
+                )
+            },
+            confirmButton = {
+                TextButton(
                     onClick = {
+                        showDiscardEditorChanges = false
                         editingEntry = null
                         editorError = null
                     }
                 ) {
-                    Text("Close", color = WorkspacePalette.Muted)
+                    Text("Discard", color = WorkspacePalette.Error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDiscardEditorChanges = false }) {
+                    Text("Keep editing", color = WorkspacePalette.AccentLight)
                 }
             }
         )
