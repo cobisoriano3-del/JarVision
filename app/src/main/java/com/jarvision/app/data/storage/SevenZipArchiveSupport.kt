@@ -76,7 +76,7 @@ object SevenZipArchiveSupport {
             counts[1]++
             listChildren(source).forEach { child ->
                 addEntry(
-                    archive, child, "$safePath/\${child.displayName}",
+                    archive, child, "$safePath/${child.displayName}",
                     listChildren, openInput, seenPaths, counts, depth + 1
                 )
             }
