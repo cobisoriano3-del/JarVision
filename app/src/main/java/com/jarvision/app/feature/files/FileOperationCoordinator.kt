@@ -254,6 +254,23 @@ class FileOperationCoordinator(
         validateName(targetName)
         when (mode) {
             StorageAccessMode.SHARED_STORAGE -> {
+                val sourcePathForProbe = source.absolutePath ?: source.documentId
+                val destinationPathForProbe = destinationParentAbsolutePath ?: destinationParentDocumentId
+                val readableByApp = runCatching { checkedSharedFile(sourcePathForProbe).canRead() }.getOrDefault(false)
+                val readableByShizuku = shizuku.status.value.isConnected && runCatching {
+                    shizuku.getOperationCapabilities(sourcePathForProbe).getBoolean(ShizukuStorageAdapter.KEY_CAN_READ)
+                }.getOrDefault(false)
+                if (!readableByApp && readableByShizuku && shizukuCanWriteDirectory(destinationPathForProbe)) {
+                    if (replaceExisting) throw IOException("Replace isn't supported through Shizuku yet; choose Keep both.")
+                    shizuku.copyExistingItem(sourcePathForProbe, destinationPathForProbe, targetName)
+                    if (moveSource) {
+                        try { shizuku.deleteExistingItem(sourcePathForProbe) }
+                        catch (_: Exception) { return "Copied successfully, but Shizuku couldn't remove the original; both copies remain." }
+                        return "Moved successfully."
+                    }
+                    return "Copied successfully."
+                }
+
                 val sourceFile = checkedSharedFile(source.absolutePath ?: source.documentId)
                 val destinationParent = checkedSharedDirectory(
                     destinationParentAbsolutePath ?: destinationParentDocumentId
