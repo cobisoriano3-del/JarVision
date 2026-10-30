@@ -157,6 +157,8 @@ import coil3.request.crossfade
 import com.jarvision.app.data.storage.SafStorageGateway
 import com.jarvision.app.data.storage.SharedStorageGateway
 import com.jarvision.app.data.storage.ShizukuStorageAdapter
+import com.jarvision.app.data.storage.ZipArchiveSupport
+import com.jarvision.app.data.storage.ZipArchiveBrowserEntry
 import com.jarvision.app.data.storage.StorageEntry
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -220,6 +222,10 @@ private fun archiveFolderName(entry: StorageEntry): String =
 private enum class BrowserViewMode { COMPACT, DETAILED, GRID }
 private enum class BrowserSortOrder { NAME, SIZE, DATE, TYPE }
 private enum class CreateItemKind { FOLDER, FILE, ZIP }
+private data class ArchiveBrowserSession(
+    val archive: StorageEntry,
+    val entries: List<ZipArchiveBrowserEntry>
+)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -280,26 +286,19 @@ fun FilesScreen(
         FileOperationCoordinator(context, shizukuAdapter)
     }
     val shizukuStatus by shizukuAdapter.status.collectAsState()
-    val canMutateFiles = when (state.accessMode) {
-        StorageAccessMode.SHARED_STORAGE -> true
-        StorageAccessMode.DOCUMENT_TREE -> state.treeUriString?.let { value ->
-            context.contentResolver.persistedUriPermissions.any {
-                it.uri == Uri.parse(value) && it.isWritePermission
-            }
-        } == true
-        else -> false
+    val canMutateFiles by produceState(
+        initialValue = false,
+        state.accessMode,
+        state.treeUriString,
+        state.currentPath.lastOrNull(),
+        shizukuStatus.isConnected,
+        shizukuStatus.permissionGranted,
+        shizukuStatus.serviceUid
+    ) {
+        val destination = state.currentPath.lastOrNull()
+        value = destination != null && filesViewModel.canWriteDirectory(destination, state)
     }
-
-    val shizukuCurrentPath = state.currentPath.lastOrNull()?.let {
-        it.absolutePath ?: it.documentId
-    }
-    val hasAuthorizedShizukuCreationRoute =
-        state.accessMode == StorageAccessMode.SHIZUKU_STORAGE &&
-            shizukuStatus.isConnected &&
-            shizukuStatus.permissionGranted &&
-            (shizukuStatus.serviceUid == 0 || shizukuStatus.serviceUid == 2000) &&
-            !shizukuCurrentPath.isNullOrBlank()
-    val canCreateItems = canMutateFiles || hasAuthorizedShizukuCreationRoute
+    val canCreateItems = canMutateFiles
 
     // Collapse the speed dial when its directory, storage context, or tab changes.
     LaunchedEffect(
@@ -365,6 +364,8 @@ fun FilesScreen(
     val coroutineScope = rememberCoroutineScope()
     var shouldOpenShizukuAfterConnect by remember { mutableStateOf(false) }
     var previewContent by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var archiveBrowserSession by remember { mutableStateOf<ArchiveBrowserSession?>(null) }
+    var archiveBrowserPath by remember { mutableStateOf("") }
     var selectedEntry by remember { mutableStateOf<StorageEntry?>(null) }
     var entrySheetMode by remember { mutableStateOf(EntrySheetMode.LONG_PRESS) }
     var pendingArchiveDestination by remember { mutableStateOf<PendingArchiveDestination?>(null) }
@@ -374,6 +375,7 @@ fun FilesScreen(
     var renameName by remember { mutableStateOf("") }
     var compressEntries by remember { mutableStateOf<List<StorageEntry>?>(null) }
     var compressName by remember { mutableStateOf("") }
+    var compressAsSevenZip by remember { mutableStateOf(false) }
     var deleteEntry by remember { mutableStateOf<StorageEntry?>(null) }
     var clipboard by remember { mutableStateOf<PendingFileClipboard?>(null) }
     var pasteConflict by remember { mutableStateOf<PasteConflict?>(null) }
@@ -514,7 +516,7 @@ fun FilesScreen(
         }
     }
 
-    fun openFile(entry: StorageEntry) {
+    fun openFile(entry: StorageEntry, forceChooser: Boolean = false) {
         if (state.accessMode == StorageAccessMode.SHIZUKU_STORAGE) {
             val path = entry.absolutePath
             if (path.isNullOrBlank()) {
@@ -548,7 +550,10 @@ fun FilesScreen(
                                 .setDataAndType(uri, bestMimeType(entry))
                                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                             intent.clipData = ClipData.newUri(context.contentResolver, entry.displayName, uri)
-                            context.startActivity(intent)
+                            context.startActivity(
+                                if (forceChooser) Intent.createChooser(intent, "Open with")
+                                else intent
+                            )
                         } catch (openError: Exception) {
                             snackbarHostState.showSnackbar(
                                 openError.message ?: "No installed app could open this protected file."
@@ -590,7 +595,10 @@ fun FilesScreen(
         intent.clipData = ClipData.newUri(context.contentResolver, entry.displayName, fileUri)
 
         try {
-            context.startActivity(intent)
+            context.startActivity(
+                if (forceChooser) Intent.createChooser(intent, "Open with")
+                else intent
+            )
         } catch (_: ActivityNotFoundException) {
             coroutineScope.launch {
                 snackbarHostState.showSnackbar("No installed app can open this file.")
@@ -606,6 +614,50 @@ fun FilesScreen(
         coroutineScope.launch { snackbarHostState.showSnackbar(message) }
     }
 
+    fun openArchiveInJarVision(entry: StorageEntry) {
+        if (!supportsZipExtraction(entry)) {
+            showMessage("In-app browsing currently supports ZIP-compatible archives. Use the external arrow for this format.")
+            return
+        }
+        selectedEntry = null
+        coroutineScope.launch {
+            try {
+                val contents = withContext(Dispatchers.IO) {
+                    fileOperations.openInputStream(state.accessMode, state.treeUriString, entry).use {
+                        ZipArchiveSupport.list(it)
+                    }
+                }
+                archiveBrowserPath = ""
+                archiveBrowserSession = ArchiveBrowserSession(entry, contents)
+            } catch (error: Exception) {
+                showMessage(error.message ?: "Couldn't browse this archive.")
+            }
+        }
+    }
+
+    fun openArchiveMember(entry: StorageEntry, member: ZipArchiveBrowserEntry) {
+        if (member.isDirectory) {
+            archiveBrowserPath = member.path
+            return
+        }
+        coroutineScope.launch {
+            try {
+                val text = withContext(Dispatchers.IO) {
+                    val bytes = fileOperations.openInputStream(
+                        state.accessMode, state.treeUriString, entry
+                    ).use { ZipArchiveSupport.readEntry(it, member.path) }
+                    if (bytes.any { it == 0.toByte() }) {
+                        throw IOException("This archive item is binary; use the external viewer to open it.")
+                    }
+                    String(bytes, Charsets.UTF_8)
+                }
+                previewContent = member.displayName to text
+            } catch (error: Exception) {
+                showMessage(error.message ?: "Couldn't preview this archive item.")
+            }
+        }
+    }
+
     fun requestArchiveDestination(entry: StorageEntry) {
         pendingArchiveDestination = PendingArchiveDestination(
             archive = entry,
@@ -618,8 +670,8 @@ fun FilesScreen(
     fun stageClipboard(entries: List<StorageEntry>, cut: Boolean) {
         val parent = state.currentPath.lastOrNull() ?: return
         if (entries.isEmpty()) return
-        if (state.accessMode == StorageAccessMode.SHIZUKU_STORAGE || state.accessMode == StorageAccessMode.NONE) {
-            showMessage("Copy and cut are unavailable in this storage mode.")
+        if (state.accessMode == StorageAccessMode.NONE || !canMutateFiles) {
+            showMessage("The current folder is not writable through the active storage backend.")
             selectedEntry = null
             return
         }
@@ -634,7 +686,7 @@ fun FilesScreen(
         val destination = state.currentPath.lastOrNull() ?: return
         if (pending.entries.isEmpty()) { showMessage("The clipboard is empty."); return }
         if (pending.accessMode != state.accessMode || pending.treeUriString != state.treeUriString ||
-            state.accessMode == StorageAccessMode.SHIZUKU_STORAGE || !canMutateFiles
+            !canMutateFiles
         ) {
             showMessage("Paste is limited to the same writable storage scope.")
             pasteConflict = null
@@ -706,7 +758,7 @@ fun FilesScreen(
         if (pending.entries.isEmpty()) { showMessage("The clipboard is empty."); return }
         val destination = state.currentPath.lastOrNull() ?: return
         if (pending.accessMode != state.accessMode || pending.treeUriString != state.treeUriString ||
-            state.accessMode == StorageAccessMode.SHIZUKU_STORAGE || !canMutateFiles
+            !canMutateFiles
         ) { showMessage("Paste is limited to the same writable storage scope."); return }
         if (pending.entries.any { source -> source.isDirectory && state.currentPath.any { it.documentId == source.documentId } }) {
             showMessage("A folder can't be pasted into itself or one of its subfolders.")
@@ -818,16 +870,29 @@ fun FilesScreen(
     fun compressSelected(entries: List<StorageEntry>, requestedName: String) {
         val destination = state.currentPath.lastOrNull() ?: return
         if (entries.isEmpty()) return
+        val useSevenZip = compressAsSevenZip
         coroutineScope.launch {
             try {
                 val outputName = withContext(Dispatchers.IO) {
-                    fileOperations.compressEntriesToZip(state.accessMode,state.treeUriString,entries,
-                        destination.documentId,destination.absolutePath,requestedName)
+                    if (useSevenZip) {
+                        fileOperations.compressEntriesTo7z(
+                            state.accessMode, state.treeUriString, entries,
+                            destination.documentId, destination.absolutePath, requestedName
+                        )
+                    } else {
+                        fileOperations.compressEntriesToZip(
+                            state.accessMode, state.treeUriString, entries,
+                            destination.documentId, destination.absolutePath, requestedName
+                        )
+                    }
                 }
                 compressEntries = null
+                compressAsSevenZip = false
                 filesViewModel.refresh()
                 showMessage("Created " + outputName + " from ${entries.size} item(s).")
-            } catch (error: Exception) { showMessage(error.message ?: "Couldn't compress the selected items.") }
+            } catch (error: Exception) {
+                showMessage(error.message ?: "Couldn't compress the selected items.")
+            }
         }
     }
 
@@ -966,10 +1031,6 @@ fun FilesScreen(
     fun extractArchiveHere(entry: StorageEntry) {
         selectedEntry = null
         val destination = state.currentPath.lastOrNull() ?: return
-        if (state.accessMode == StorageAccessMode.SHIZUKU_STORAGE) {
-            showMessage("Extraction is disabled in read-only Shizuku mode.")
-            return
-        }
         coroutineScope.launch {
             try {
                 val message = withContext(Dispatchers.IO) {
@@ -989,10 +1050,6 @@ fun FilesScreen(
     fun extractArchive(entry: StorageEntry) {
         selectedEntry = null
         val destination = state.currentPath.lastOrNull() ?: return
-        if (state.accessMode == StorageAccessMode.SHIZUKU_STORAGE) {
-            showMessage("Extraction is disabled in read-only Shizuku mode.")
-            return
-        }
         coroutineScope.launch {
             try {
                 val folderName = withContext(Dispatchers.IO) {
@@ -1110,7 +1167,6 @@ fun FilesScreen(
                             it.entries.isNotEmpty() &&
                                 it.accessMode == state.accessMode &&
                                 it.treeUriString == state.treeUriString &&
-                                state.accessMode != StorageAccessMode.SHIZUKU_STORAGE &&
                                 canMutateFiles
                         } == true,
                         needsSafWriteGrant = state.accessMode == StorageAccessMode.DOCUMENT_TREE &&
@@ -1260,20 +1316,24 @@ fun FilesScreen(
         )
 
         selectedEntry?.let { entry ->
-            val canWriteExistingItems = when (state.accessMode) {
-                StorageAccessMode.SHARED_STORAGE -> true
-                StorageAccessMode.DOCUMENT_TREE -> state.treeUriString?.let { value ->
-                    context.contentResolver.persistedUriPermissions.any {
-                        it.uri == Uri.parse(value) && it.isWritePermission
-                    }
-                } == true
-                else -> false
+            val canWriteExistingItems = canMutateFiles
+            val parentLocation = state.currentPath.lastOrNull()
+            val selectedCapabilities by produceState(
+                initialValue = StoragePathCapabilities(),
+                entry.documentId,
+                state.accessMode,
+                state.treeUriString,
+                parentLocation?.documentId,
+                shizukuStatus.isConnected,
+                shizukuStatus.permissionGranted,
+                shizukuStatus.serviceUid
+            ) {
+                value = parentLocation?.let {
+                    filesViewModel.getEntryCapabilities(entry, it, state)
+                } ?: StoragePathCapabilities()
             }
             val isZipContainer = supportsZipExtraction(entry)
-            val canExtractInCurrentFolder = canWriteExistingItems &&
-                isZipContainer &&
-                (state.accessMode == StorageAccessMode.SHARED_STORAGE ||
-                    state.accessMode == StorageAccessMode.DOCUMENT_TREE)
+            val canExtractInCurrentFolder = canWriteExistingItems && isZipContainer
             val canChooseExtractionDestination =
                 state.accessMode != StorageAccessMode.NONE && isZipContainer
 
@@ -1305,9 +1365,15 @@ fun FilesScreen(
                             ContextActionRow(
                                 "Compress to *.7z",
                                 Icons.Filled.Archive,
-                                enabled = false,
-                                supportingText = "7z compression is not available yet."
-                            ) { }
+                                enabled = canWriteExistingItems,
+                                supportingText = if (canWriteExistingItems) "Create a 7z archive copy in this folder."
+                                    else "The current destination is not writable."
+                            ) {
+                                selectedEntry = null
+                                compressAsSevenZip = true
+                                compressName = defaultSevenZipName(entry)
+                                compressEntries = listOf(entry)
+                            }
                             ContextActionRow(
                                 "Compress",
                                 Icons.Filled.Archive,
@@ -1323,11 +1389,11 @@ fun FilesScreen(
                             ContextActionRow("Cut", Icons.Filled.ContentCut, enabled = canWriteExistingItems) {
                                 stageClipboard(listOf(entry), true)
                             }
-                            ContextActionRow("Delete", Icons.Filled.Delete, enabled = canWriteExistingItems) {
+                            ContextActionRow("Delete", Icons.Filled.Delete, enabled = selectedCapabilities.canDelete) {
                                 selectedEntry = null
                                 deleteEntry = entry
                             }
-                            ContextActionRow("Rename", Icons.Filled.Edit, enabled = canWriteExistingItems) {
+                            ContextActionRow("Rename", Icons.Filled.Edit, enabled = selectedCapabilities.canRename) {
                                 selectedEntry = null
                                 renameName = entry.displayName
                                 renameEntry = entry
@@ -1363,10 +1429,13 @@ fun FilesScreen(
                                 "View",
                                 Icons.Filled.Visibility,
                                 trailingImage = Icons.Filled.OpenInNew,
-                                supportingText = "Open with an installed viewer or editor."
+                                supportingText = "Browse this archive inside JarVision.",
+                                onTrailingClick = {
+                                    selectedEntry = null
+                                    openFile(entry, forceChooser = true)
+                                }
                             ) {
-                                selectedEntry = null
-                                openFile(entry)
+                                openArchiveInJarVision(entry)
                             }
                             ContextActionRow(
                                 "Extract here",
@@ -1389,7 +1458,7 @@ fun FilesScreen(
                                 Icons.Filled.FolderOpen,
                                 enabled = canChooseExtractionDestination,
                                 supportingText = if (!isZipContainer) "This archive format is not supported yet."
-                                    else "Choose a separate folder; Shizuku sources are read-only."
+                                    else "Choose a separate writable folder; the source is read without modification."
                             ) {
                                 selectedEntry = null
                                 requestArchiveDestination(entry)
@@ -1427,11 +1496,11 @@ fun FilesScreen(
                             ContextActionRow("Cut", Icons.Filled.ContentCut, enabled = canWriteExistingItems) {
                                 stageClipboard(listOf(entry), true)
                             }
-                            ContextActionRow("Delete", Icons.Filled.Delete, enabled = canWriteExistingItems) {
+                            ContextActionRow("Delete", Icons.Filled.Delete, enabled = selectedCapabilities.canDelete) {
                                 selectedEntry = null
                                 deleteEntry = entry
                             }
-                            ContextActionRow("Rename", Icons.Filled.Edit, enabled = canWriteExistingItems) {
+                            ContextActionRow("Rename", Icons.Filled.Edit, enabled = selectedCapabilities.canRename) {
                                 selectedEntry = null
                                 renameName = entry.displayName
                                 renameEntry = entry
@@ -1442,6 +1511,108 @@ fun FilesScreen(
                         }
                     }
                     Spacer(Modifier.height(24.dp))
+                }
+            }
+        }
+
+        archiveBrowserSession?.let { session ->
+            val visibleMembers = session.entries.filter { member ->
+                member.path.substringBeforeLast('/', "") == archiveBrowserPath
+            }
+            ModalBottomSheet(onDismissRequest = { archiveBrowserSession = null }) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 620.dp)
+                        .padding(horizontal = 16.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (archiveBrowserPath.isNotEmpty()) {
+                            IconButton(
+                                onClick = {
+                                    archiveBrowserPath = archiveBrowserPath.substringBeforeLast('/', "")
+                                }
+                            ) {
+                                Icon(Icons.Filled.ArrowBack, contentDescription = "Back in archive")
+                            }
+                        }
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                session.archive.displayName,
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                if (archiveBrowserPath.isBlank()) "Archive root" else "/$archiveBrowserPath",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                        IconButton(onClick = { archiveBrowserSession = null }) {
+                            Icon(Icons.Filled.Close, contentDescription = "Close archive")
+                        }
+                    }
+                    if (visibleMembers.isEmpty()) {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().height(150.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("This archive folder is empty.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    } else {
+                        LazyColumn(
+                            modifier = Modifier.fillMaxWidth().heightIn(max = 480.dp),
+                            contentPadding = PaddingValues(bottom = 24.dp)
+                        ) {
+                            items(visibleMembers, key = { it.path }) { member ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clip(RoundedCornerShape(10.dp))
+                                        .clickable { openArchiveMember(session.archive, member) }
+                                        .padding(horizontal = 8.dp, vertical = 11.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Icon(
+                                        imageVector = if (member.isDirectory) Icons.Filled.Folder
+                                            else Icons.Filled.InsertDriveFile,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.size(22.dp)
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Text(
+                                        member.displayName,
+                                        modifier = Modifier.weight(1f),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (!member.isDirectory) {
+                                        Text(
+                                            formatBytes(member.sizeBytes),
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    if (member.isDirectory) {
+                                        Icon(
+                                            Icons.Filled.ChevronRight,
+                                            contentDescription = "Open folder",
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1468,19 +1639,24 @@ fun FilesScreen(
 
         compressEntries?.let { entries ->
             AlertDialog(
-                onDismissRequest = { compressEntries = null },
-                title = { Text("Compress to ZIP") },
+                onDismissRequest = {
+                    compressEntries = null
+                    compressAsSevenZip = false
+                },
+                title = { Text(if (compressAsSevenZip) "Compress to 7z" else "Compress to ZIP") },
                 text = {
                     Column {
                         Text(
-                            "Create a ZIP copy of " + entries.joinToString(", ") { it.displayName } + " in the current folder. The original items will not be changed.",
+                            "Create a " + (if (compressAsSevenZip) "7z" else "ZIP") + " copy of " +
+                                entries.joinToString(", ") { it.displayName } +
+                                " in the current folder. The original items will not be changed.",
                             style = MaterialTheme.typography.bodyMedium
                         )
                         Spacer(Modifier.height(12.dp))
                         OutlinedTextField(
                             value = compressName,
                             onValueChange = { compressName = it },
-                            label = { Text("Archive name") },
+                            label = { Text(if (compressAsSevenZip) "7z archive name" else "ZIP archive name") },
                             singleLine = true
                         )
                     }
@@ -1492,7 +1668,10 @@ fun FilesScreen(
                     ) { Text("Compress") }
                 },
                 dismissButton = {
-                    TextButton(onClick = { compressEntries = null }) { Text("Cancel") }
+                    TextButton(onClick = {
+                        compressEntries = null
+                        compressAsSevenZip = false
+                    }) { Text("Cancel") }
                 }
             )
         }
@@ -1578,7 +1757,7 @@ fun FilesScreen(
                     title = { Text("JarVision") },
                     text = {
                         Text(
-                            "JarVision 0.7.0\nA compact Android file manager with local file operations and ZIP tools. Shizuku supports creation of new folders, empty files, and empty ZIPs where permissions allow; existing items remain read-only."
+                            "JarVision 0.7.0\nA compact Android file manager with local file operations and archive tools. Shizuku supports path-checked creation, copy, rename, delete, ZIP extraction, and ZIP/7z output where Android permissions allow."
                         )
                     },
                     confirmButton = {
@@ -2386,7 +2565,7 @@ private fun BrowserState(
     ) {
         if (state.accessMode == StorageAccessMode.SHIZUKU_STORAGE) {
             Text(
-                text = "CREATE-ONLY · Shizuku",
+                text = "SHIZUKU · PATH-CHECKED",
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
@@ -2756,44 +2935,55 @@ private fun ContextActionRow(
     enabled: Boolean = true,
     supportingText: String? = null,
     trailingImage: ImageVector? = null,
+    onTrailingClick: (() -> Unit)? = null,
     onClick: () -> Unit
 ) {
     val contentColor = MaterialTheme.colorScheme.onSurface.copy(
         alpha = if (enabled) 1f else 0.42f
     )
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(enabled = enabled, onClick = onClick)
-            .padding(horizontal = 8.dp, vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            imageVector = image,
-            contentDescription = null,
-            tint = contentColor,
-            modifier = Modifier.size(24.dp)
-        )
-        Spacer(Modifier.width(18.dp))
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge, color = contentColor)
-            if (supportingText != null) {
-                Text(
-                    supportingText,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = contentColor.copy(alpha = if (enabled) 0.72f else 0.8f)
-                )
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .clip(RoundedCornerShape(12.dp))
+                .clickable(enabled = enabled, onClick = onClick)
+                .padding(horizontal = 8.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = image,
+                contentDescription = null,
+                tint = contentColor,
+                modifier = Modifier.size(24.dp)
+            )
+            Spacer(Modifier.width(18.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.bodyLarge, color = contentColor)
+                if (supportingText != null) {
+                    Text(
+                        supportingText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = contentColor.copy(alpha = if (enabled) 0.72f else 0.8f)
+                    )
+                }
             }
         }
         if (trailingImage != null) {
-            Spacer(Modifier.width(8.dp))
-            Icon(
-                imageVector = trailingImage,
-                contentDescription = "Opens externally",
-                tint = contentColor,
-                modifier = Modifier.size(18.dp)
-            )
+            IconButton(
+                onClick = onTrailingClick ?: onClick,
+                enabled = enabled,
+                modifier = Modifier.size(48.dp)
+            ) {
+                Icon(
+                    imageVector = trailingImage,
+                    contentDescription = "Open with an external app",
+                    tint = contentColor,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
         }
     }
 }
@@ -2853,6 +3043,11 @@ private fun defaultZipName(entry: StorageEntry): String {
         name
     }
     return if (!entry.isDirectory && extension == "zip") "$base-compressed.zip" else "$base.zip"
+}
+
+private fun defaultSevenZipName(entry: StorageEntry): String {
+    val zipName = defaultZipName(entry)
+    return zipName.substringBeforeLast('.', zipName) + ".7z"
 }
 
 private fun bestMimeType(entry: StorageEntry): String {

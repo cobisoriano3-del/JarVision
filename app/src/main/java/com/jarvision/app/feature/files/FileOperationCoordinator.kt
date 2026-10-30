@@ -8,6 +8,8 @@ import com.jarvision.app.data.storage.SafStorageGateway
 import com.jarvision.app.data.storage.SharedStorageGateway
 import com.jarvision.app.data.storage.ShizukuStorageAdapter
 import com.jarvision.app.data.storage.StorageEntry
+import com.jarvision.app.data.storage.SevenZipArchiveSupport
+import com.jarvision.app.data.storage.SevenZipArchiveResult
 import com.jarvision.app.data.storage.ZipArchiveSupport
 import com.jarvision.app.data.storage.ZipArchiveTestResult
 import java.io.File
@@ -20,9 +22,8 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 /**
- * Executes file operations through the active storage adapter. Writes are supported for shared
- * storage and SAF trees with a persisted write grant. Shizuku delegates creation-only operations
- * to its UserService; rename, delete and move of existing items remain unavailable in that mode.
+ * Executes file operations through the active storage adapter. Shizuku capability checks run in
+ * the UserService identity; the operation itself remains authoritative when Android denies access.
  */
 class FileOperationCoordinator(
     private val context: Context,
@@ -67,7 +68,9 @@ class FileOperationCoordinator(
         StorageAccessMode.DOCUMENT_TREE -> saf.listChildren(
             parseTreeUri(treeUriString), parentDocumentId
         ).firstOrNull { it.displayName.equals(name, ignoreCase = true) }
-        else -> throw IOException("Changes are unavailable in read-only Shizuku mode.")
+        StorageAccessMode.SHIZUKU_STORAGE -> shizuku.listChildren(parentAbsolutePath ?: parentDocumentId)
+            .firstOrNull { it.displayName.equals(name, ignoreCase = true) }
+        StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
     }
 
     fun createFolder(
@@ -216,7 +219,12 @@ class FileOperationCoordinator(
                     ) == null
                 ) throw IOException("The storage provider couldn't rename this item.")
             }
-            else -> throw IOException("Changes are unavailable in read-only Shizuku mode.")
+            StorageAccessMode.SHIZUKU_STORAGE ->
+                shizuku.renameExistingItem(
+                    entry.absolutePath ?: throw IOException("Shizuku returned no item path."),
+                    newName
+                )
+            StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
         }
     }
 
@@ -233,7 +241,11 @@ class FileOperationCoordinator(
                     throw IOException("The storage provider couldn't delete this item.")
                 }
             }
-            else -> throw IOException("Changes are unavailable in read-only Shizuku mode.")
+            StorageAccessMode.SHIZUKU_STORAGE ->
+                shizuku.deleteExistingItem(
+                    entry.absolutePath ?: throw IOException("Shizuku returned no item path.")
+                )
+            StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
         }
     }
 
@@ -324,6 +336,36 @@ class FileOperationCoordinator(
                 }
                 return replaceNotice?.let { "Copied successfully. " + it } ?: "Copied successfully."
             }
+            StorageAccessMode.SHIZUKU_STORAGE -> {
+                val sourcePath = source.absolutePath
+                    ?: throw IOException("Shizuku returned no source path.")
+                val destinationPath = destinationParentAbsolutePath ?: destinationParentDocumentId
+                if (!shizukuCanWriteDirectory(destinationPath)) {
+                    throw IOException("The active Shizuku identity cannot write to this destination folder.")
+                }
+                val existing = shizuku.listChildren(destinationPath).firstOrNull {
+                    it.displayName.equals(targetName, ignoreCase = true)
+                }
+                if (existing != null) {
+                    if (moveSource && existing.absolutePath == sourcePath) {
+                        return "This item is already in that folder."
+                    }
+                    throw IOException("An item with that name already exists. Shizuku replacement is not supported.")
+                }
+                if (source.isDirectory && destinationPath.startsWith(sourcePath.trimEnd('/') + "/")) {
+                    throw IOException("A folder can't be copied into itself or a subfolder.")
+                }
+                shizuku.copyExistingItem(sourcePath, destinationPath, targetName)
+                if (moveSource) {
+                    try {
+                        shizuku.deleteExistingItem(sourcePath)
+                    } catch (_: Exception) {
+                        return "Copied successfully, but Shizuku couldn't remove the original; both copies remain."
+                    }
+                    return "Moved successfully."
+                }
+                return "Copied successfully."
+            }
             StorageAccessMode.DOCUMENT_TREE -> {
                 val treeUri = parseTreeUri(treeUriString)
                 requireWriteGrant(treeUri)
@@ -401,8 +443,8 @@ class FileOperationCoordinator(
         mode: StorageAccessMode, treeUriString: String?, sources: List<StorageEntry>,
         destinationParentDocumentId: String, destinationParentAbsolutePath: String?, requestedName: String
     ): String {
-        if (mode != StorageAccessMode.SHARED_STORAGE && mode != StorageAccessMode.DOCUMENT_TREE) {
-            throw IOException("Compression is unavailable in this storage mode.")
+        if (mode == StorageAccessMode.NONE) {
+            throw IOException("Choose a storage location first.")
         }
         if (sources.isEmpty()) throw IOException("Select at least one item to compress.")
         var outputName = requestedName.trim()
@@ -423,11 +465,12 @@ class FileOperationCoordinator(
             when (mode) {
                 StorageAccessMode.SHARED_STORAGE -> {
                     val parent = checkedSharedDirectory(destinationParentAbsolutePath ?: destinationParentDocumentId)
+                    if (!parent.canWrite()) throw IOException("The destination folder isn't writable.")
                     val target = safeSharedChildTarget(parent, outputName)
                     if (target.exists() || Files.isSymbolicLink(target.toPath())) throw IOException("An item with that name already exists.")
                     val temporary = safeSharedChildTarget(parent, ".jarvision-stage-" + System.nanoTime() + ".zip")
                     try {
-                        copyFileTree(stagedZip, temporary)
+                        publishStagedFileToShared(stagedZip, temporary)
                         Files.move(temporary.toPath(), target.toPath())
                     } catch (error: Exception) {
                         temporary.delete()
@@ -445,6 +488,12 @@ class FileOperationCoordinator(
                         if (actual == null || !actual.displayName.equals(outputName, ignoreCase = true)) {
                             throw IOException("The storage provider changed the ZIP name; no archive was written.")
                         }
+                        val published = saf.getDocument(treeUri, DocumentsContract.getDocumentId(targetUri))
+                        if (published == null || published.isDirectory ||
+                            !published.displayName.equals(outputName, ignoreCase = true)
+                        ) {
+                            throw IOException("The storage provider changed the ZIP name or type; no archive was written.")
+                        }
                         stagedZip.inputStream().buffered().use { input ->
                             resolver.openOutputStream(targetUri, "w").use { output ->
                                 if (output == null) throw IOException("The storage provider couldn't write the ZIP.")
@@ -456,11 +505,129 @@ class FileOperationCoordinator(
                         throw error
                     }
                 }
-                else -> throw IOException("Compression is unavailable in this storage mode.")
+                StorageAccessMode.SHIZUKU_STORAGE -> {
+                    val parentPath = destinationParentAbsolutePath ?: destinationParentDocumentId
+                    if (!shizukuCanWriteDirectory(parentPath)) {
+                        throw IOException("The active Shizuku identity cannot write to this destination folder.")
+                    }
+                    try {
+                        shizuku.openNewFileForWrite(parentPath, outputName).use { output ->
+                            stagedZip.inputStream().buffered().use { it.copyTo(output) }
+                        }
+                    } catch (error: Exception) {
+                        runCatching { shizuku.deleteExistingItem(File(parentPath, outputName).path) }
+                        throw error
+                    }
+                }
+                StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
             }
             return outputName
         } finally {
             stagedZip.delete()
+        }
+    }
+
+    /** Creates a seekable 7z archive, then publishes it through the active writable backend. */
+    fun compressEntriesTo7z(
+        mode: StorageAccessMode,
+        treeUriString: String?,
+        sources: List<StorageEntry>,
+        destinationParentDocumentId: String,
+        destinationParentAbsolutePath: String?,
+        requestedName: String
+    ): String {
+        if (mode == StorageAccessMode.NONE) throw IOException("Choose a storage location first.")
+        if (sources.isEmpty()) throw IOException("Select at least one item to compress.")
+        var outputName = requestedName.trim()
+        if (!outputName.lowercase(Locale.ROOT).endsWith(".7z")) outputName += ".7z"
+        validateName(outputName)
+        if (findNamedChild(mode, treeUriString, destinationParentDocumentId, destinationParentAbsolutePath, outputName) != null) {
+            throw IOException("An item with that name already exists.")
+        }
+        val stagedArchive = File(context.cacheDir, "jarvision-compress-" + System.nanoTime() + ".7z")
+        try {
+            SevenZipArchiveSupport.create(
+                stagedArchive,
+                sources,
+                listChildren = { entry ->
+                    when (mode) {
+                        StorageAccessMode.SHARED_STORAGE -> shared.listChildren(
+                            checkedSharedDirectory(entry.absolutePath ?: entry.documentId).path
+                        )
+                        StorageAccessMode.DOCUMENT_TREE -> saf.listChildren(
+                            parseTreeUri(treeUriString), entry.documentId
+                        )
+                        StorageAccessMode.SHIZUKU_STORAGE -> shizuku.listChildren(
+                            entry.absolutePath ?: entry.documentId
+                        )
+                        StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
+                    }
+                },
+                openInput = { entry -> openInputStream(mode, treeUriString, entry) }
+            )
+            when (mode) {
+                StorageAccessMode.SHARED_STORAGE -> {
+                    val parent = checkedSharedDirectory(destinationParentAbsolutePath ?: destinationParentDocumentId)
+                    if (!parent.canWrite()) throw IOException("The destination folder isn't writable.")
+                    val target = safeSharedChildTarget(parent, outputName)
+                    if (target.exists()) throw IOException("An item with that name already exists.")
+                    val temporary = safeSharedChildTarget(parent, ".jarvision-stage-" + System.nanoTime() + ".7z")
+                    try {
+                        publishStagedFileToShared(stagedArchive, temporary)
+                        Files.move(temporary.toPath(), target.toPath())
+                    } catch (error: Exception) {
+                        temporary.delete()
+                        throw error
+                    }
+                }
+                StorageAccessMode.DOCUMENT_TREE -> {
+                    val treeUri = parseTreeUri(treeUriString)
+                    requireWriteGrant(treeUri)
+                    val parent = saf.getDocument(treeUri, destinationParentDocumentId)
+                    if (parent?.isDirectory != true) throw IOException("The destination folder isn't available.")
+                    val targetUri = DocumentsContract.createDocument(
+                        resolver,
+                        documentUri(treeUri, destinationParentDocumentId),
+                        "application/x-7z-compressed",
+                        outputName
+                    ) ?: throw IOException("The storage provider couldn't create the 7z archive.")
+                    try {
+                        val published = saf.getDocument(treeUri, DocumentsContract.getDocumentId(targetUri))
+                        if (published == null || published.isDirectory ||
+                            !published.displayName.equals(outputName, ignoreCase = true)
+                        ) {
+                            throw IOException("The storage provider changed the 7z name or type; no archive was written.")
+                        }
+                        stagedArchive.inputStream().buffered().use { input ->
+                            resolver.openOutputStream(targetUri, "w").use { output ->
+                                if (output == null) throw IOException("The storage provider couldn't write the 7z archive.")
+                                input.copyTo(output)
+                            }
+                        }
+                    } catch (error: Exception) {
+                        runCatching { DocumentsContract.deleteDocument(resolver, targetUri) }
+                        throw error
+                    }
+                }
+                StorageAccessMode.SHIZUKU_STORAGE -> {
+                    val parentPath = destinationParentAbsolutePath ?: destinationParentDocumentId
+                    if (!shizukuCanWriteDirectory(parentPath)) {
+                        throw IOException("The active Shizuku identity cannot write to this destination folder.")
+                    }
+                    try {
+                        shizuku.openNewFileForWrite(parentPath, outputName).use { output ->
+                            stagedArchive.inputStream().buffered().use { it.copyTo(output) }
+                        }
+                    } catch (error: Exception) {
+                        runCatching { shizuku.deleteExistingItem(File(parentPath, outputName).path) }
+                        throw error
+                    }
+                }
+                StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
+            }
+            return outputName
+        } finally {
+            stagedArchive.delete()
         }
     }
 
@@ -492,7 +659,10 @@ class FileOperationCoordinator(
                 StorageAccessMode.DOCUMENT_TREE -> saf.listChildren(
                     parseTreeUri(treeUriString), entry.documentId
                 )
-                else -> throw IOException("Compression is unavailable in read-only Shizuku mode.")
+                StorageAccessMode.SHIZUKU_STORAGE -> shizuku.listChildren(
+                    entry.absolutePath ?: entry.documentId
+                )
+                StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
             }
             children.forEach { child ->
                 addEntryToZip(
@@ -548,16 +718,37 @@ class FileOperationCoordinator(
         destinationParentDocumentId: String,
         destinationParentAbsolutePath: String?
     ): String {
-        if (mode != StorageAccessMode.SHARED_STORAGE && mode != StorageAccessMode.DOCUMENT_TREE) {
-            throw IOException("Extraction is disabled in read-only Shizuku mode.")
+        if (mode == StorageAccessMode.NONE) {
+            throw IOException("Choose a storage location first.")
         }
         if (archive.isDirectory || !isZipContainerName(archive.displayName)) {
             throw IOException("Only ZIP files can be extracted.")
         }
+
+        val destinationPath = destinationParentAbsolutePath ?: destinationParentDocumentId
+        when (mode) {
+            StorageAccessMode.SHARED_STORAGE -> {
+                val destination = checkedSharedDirectory(destinationPath)
+                if (!destination.canWrite()) throw IOException("The destination folder isn't writable.")
+            }
+            StorageAccessMode.DOCUMENT_TREE -> {
+                val treeUri = parseTreeUri(treeUriString)
+                requireWriteGrant(treeUri)
+                if (saf.getDocument(treeUri, destinationParentDocumentId)?.isDirectory != true) {
+                    throw IOException("The destination folder isn't available.")
+                }
+            }
+            StorageAccessMode.SHIZUKU_STORAGE -> if (!shizukuCanWriteDirectory(destinationPath)) {
+                throw IOException("The active Shizuku identity cannot write to this destination folder.")
+            }
+            StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
+        }
+
         val stage = File(context.cacheDir, "jarvision-zip-here-" + System.nanoTime())
         if (!stage.mkdirs()) throw IOException("Couldn't prepare a temporary extraction folder.")
         val createdShared = mutableListOf<File>()
         val createdSaf = mutableListOf<Uri>()
+        val createdShizuku = mutableListOf<String>()
         try {
             val result = openInputStream(mode, treeUriString, archive).use {
                 ZipArchiveSupport.extract(it, stage)
@@ -565,15 +756,13 @@ class FileOperationCoordinator(
             val children = stage.listFiles() ?: throw IOException("Couldn't read staged ZIP contents.")
             when (mode) {
                 StorageAccessMode.SHARED_STORAGE -> {
-                    val parent = checkedSharedDirectory(destinationParentAbsolutePath ?: destinationParentDocumentId)
+                    val parent = checkedSharedDirectory(destinationPath)
                     val names = shared.listChildren(parent.path).map { it.displayName.lowercase(Locale.ROOT) }.toSet()
                     if (children.any { it.name.lowercase(Locale.ROOT) in names }) {
                         throw IOException("An extracted item already exists here. Use Extract to folder to avoid overwriting.")
                     }
                     children.forEach { child ->
-                        val target = File(parent, child.name)
-                        createdShared.add(target)
-                        copyFileTree(child, target)
+                        copyStagedEntryToShared(child, File(parent, child.name), createdShared)
                     }
                 }
                 StorageAccessMode.DOCUMENT_TREE -> {
@@ -590,12 +779,23 @@ class FileOperationCoordinator(
                         createdSaf
                     )
                 }
-                else -> throw IOException("Extraction is disabled in read-only Shizuku mode.")
+                StorageAccessMode.SHIZUKU_STORAGE -> {
+                    val existingNames = shizuku.listChildren(destinationPath)
+                        .map { it.displayName.lowercase(Locale.ROOT) }.toSet()
+                    if (children.any { it.name.lowercase(Locale.ROOT) in existingNames }) {
+                        throw IOException("An extracted item already exists here. Use Extract to folder to avoid overwriting.")
+                    }
+                    children.forEach { child ->
+                        publishStagedEntryToShizuku(child, destinationPath, createdShizuku)
+                    }
+                }
+                StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
             }
             return "Extracted " + result.fileCount + " files here."
         } catch (error: Exception) {
             createdShared.asReversed().forEach { runCatching { it.deleteRecursively() } }
             createdSaf.asReversed().forEach { uri -> runCatching { DocumentsContract.deleteDocument(resolver, uri) } }
+            createdShizuku.asReversed().forEach { path -> runCatching { shizuku.deleteExistingItem(path) } }
             throw error
         } finally {
             stage.deleteRecursively()
@@ -610,8 +810,8 @@ class FileOperationCoordinator(
         destinationParentDocumentId: String,
         destinationParentAbsolutePath: String?
     ): String {
-        if (mode != StorageAccessMode.SHARED_STORAGE && mode != StorageAccessMode.DOCUMENT_TREE) {
-            throw IOException("Extraction is disabled in read-only Shizuku mode.")
+        if (mode == StorageAccessMode.NONE) {
+            throw IOException("Choose a storage location first.")
         }
         if (archive.isDirectory || !isZipContainerName(archive.displayName)) {
             throw IOException("Only ZIP files can be extracted.")
@@ -623,6 +823,7 @@ class FileOperationCoordinator(
         if (!stage.mkdirs()) throw IOException("Couldn't prepare a temporary extraction folder.")
         var createdSharedFolder: File? = null
         var createdSafFolder: Uri? = null
+        var createdShizukuFolder: String? = null
         try {
             openInputStream(mode, treeUriString, archive).use { ZipArchiveSupport.extract(it, stage) }
             val targetName = uniqueFolderName(
@@ -635,7 +836,9 @@ class FileOperationCoordinator(
                     if (!target.mkdir()) throw IOException("Couldn't create the extraction folder.")
                     createdSharedFolder = target
                     val children = stage.listFiles() ?: throw IOException("Couldn't read staged ZIP contents.")
-                    children.forEach { child -> copyFileTree(child, File(target, child.name)) }
+                    children.forEach { child ->
+                        copyStagedEntryToShared(child, File(target, child.name), mutableListOf())
+                    }
                 }
                 StorageAccessMode.DOCUMENT_TREE -> {
                     val treeUri = parseTreeUri(treeUriString)
@@ -649,12 +852,26 @@ class FileOperationCoordinator(
                     createdSafFolder = target
                     copyLocalDirectoryToSaf(stage, target)
                 }
-                else -> throw IOException("Extraction is disabled in read-only Shizuku mode.")
+                StorageAccessMode.SHIZUKU_STORAGE -> {
+                    val parentPath = destinationParentAbsolutePath ?: destinationParentDocumentId
+                    if (!shizukuCanWriteDirectory(parentPath)) {
+                        throw IOException("The active Shizuku identity cannot write to this destination folder.")
+                    }
+                    shizuku.createDirectory(parentPath, targetName)
+                    val targetPath = File(parentPath, targetName).path
+                    createdShizukuFolder = targetPath
+                    val children = stage.listFiles() ?: throw IOException("Couldn't read staged ZIP contents.")
+                    children.forEach { child ->
+                        publishStagedEntryToShizuku(child, targetPath, mutableListOf())
+                    }
+                }
+                StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
             }
             return targetName
         } catch (error: Exception) {
             createdSharedFolder?.let { runCatching { it.deleteRecursively() } }
             createdSafFolder?.let { runCatching { DocumentsContract.deleteDocument(resolver, it) } }
+            createdShizukuFolder?.let { path -> runCatching { shizuku.deleteExistingItem(path) } }
             throw error
         } finally {
             stage.deleteRecursively()
@@ -807,6 +1024,79 @@ class FileOperationCoordinator(
         } catch (error: Exception) {
             runCatching { DocumentsContract.deleteDocument(resolver, destinationUri) }
             throw error
+        }
+    }
+
+    /** Atomically claims a fresh shared-storage file name before writing staged archive bytes. */
+    private fun publishStagedFileToShared(source: File, target: File) {
+        if (Files.isSymbolicLink(target.toPath()) || !target.createNewFile()) {
+            throw IOException("An item with that name already exists.")
+        }
+        try {
+            source.inputStream().buffered().use { input ->
+                target.outputStream().buffered().use { output -> input.copyTo(output) }
+            }
+        } catch (error: Exception) {
+            target.delete()
+            throw error
+        }
+    }
+
+    /** Publishes extracted files without ever opening an existing destination for truncation. */
+    private fun copyStagedEntryToShared(
+        source: File,
+        target: File,
+        created: MutableList<File>
+    ) {
+        if (Files.isSymbolicLink(target.toPath())) {
+            throw IOException("The destination contains a symbolic link.")
+        }
+        if (source.isDirectory) {
+            if (!target.mkdir()) throw IOException("The destination item already exists or the folder couldn't be created.")
+            created.add(target)
+            try {
+                val children = source.listFiles() ?: throw IOException("Couldn't read a staged folder.")
+                children.sortedBy { it.name.lowercase(Locale.ROOT) }.forEach { child ->
+                    copyStagedEntryToShared(child, File(target, child.name), created)
+                }
+            } catch (error: Exception) {
+                target.deleteRecursively()
+                throw error
+            }
+        } else {
+            if (!target.createNewFile()) throw IOException("The destination item already exists.")
+            created.add(target)
+            try {
+                source.inputStream().buffered().use { input ->
+                    target.outputStream().buffered().use { output -> input.copyTo(output) }
+                }
+            } catch (error: Exception) {
+                target.delete()
+                throw error
+            }
+        }
+    }
+
+    private fun publishStagedEntryToShizuku(
+        source: File,
+        destinationParentPath: String,
+        createdPaths: MutableList<String>
+    ) {
+        validateName(source.name)
+        val targetPath = File(destinationParentPath, source.name).path
+        if (source.isDirectory) {
+            shizuku.createDirectory(destinationParentPath, source.name)
+            createdPaths.add(targetPath)
+            val children = source.listFiles() ?: throw IOException("Couldn't read a staged folder.")
+            children.sortedBy { it.name.lowercase(Locale.ROOT) }.forEach { child ->
+                publishStagedEntryToShizuku(child, targetPath, createdPaths)
+            }
+        } else {
+            val output = shizuku.openNewFileForWrite(destinationParentPath, source.name)
+            createdPaths.add(targetPath)
+            output.use { stream ->
+                source.inputStream().buffered().use { it.copyTo(stream) }
+            }
         }
     }
 

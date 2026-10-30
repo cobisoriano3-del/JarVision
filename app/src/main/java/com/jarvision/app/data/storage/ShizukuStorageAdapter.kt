@@ -38,8 +38,8 @@ data class ShizukuConnectionStatus(
 }
 
 /**
- * App-process bridge to the Shizuku UserService. Existing items remain read-only; creation of
- * new folders, files and empty ZIPs is delegated to the service and confined to shared storage.
+ * App-process bridge to the Shizuku UserService. Capability checks and supported mutations are
+ * delegated to the service identity and confined to shared storage; Android may still deny paths.
  */
 class ShizukuStorageAdapter private constructor(context: Context) {
 
@@ -91,7 +91,7 @@ class ShizukuStorageAdapter private constructor(context: Context) {
                     isBinding = false,
                     isConnected = true,
                     serviceUid = uid,
-                    message = "Connected. Browse shared storage and create new items where Shizuku permits."
+                    message = "Connected. Browse and use path-permitted file operations where Shizuku allows."
                 )
             } catch (error: Exception) {
                 remoteService = null

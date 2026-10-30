@@ -124,13 +124,13 @@ fun AdvancedAccessScreen() {
                 modifier = Modifier.padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Text("Read-only access", style = MaterialTheme.typography.titleMedium)
+                Text("Path-checked operations", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "When connected, use the Shizuku button in Files to browse existing shared-storage folders, including Android/data and Android/obb wherever your device permits. Text and config files can be previewed read-only, up to 1 MiB.",
+                    "When connected, use the Shizuku button in Files to browse shared-storage folders, including Android/data and Android/obb wherever your device permits. JarVision checks the current destination before enabling create, ZIP/7z output, or extraction actions, and checks the selected item before enabling rename or delete. ZIP-compatible archives can be extracted here, and files or folders can be copied or cut within the Shizuku storage scope.",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    "Shizuku may run as ADB/shell or root. Shell access is not root access, and Android or the device manufacturer may still deny specific folders. This adapter does not write, rename, replace, or delete files.",
+                    "Shizuku may run as ADB/shell or root. Shell access is not root access, and Android or the device manufacturer may still deny specific paths or operations. Capability checks are advisory; each operation is checked again by the UserService. Replace-in-place is not supported for Shizuku copy, and no protected folder is assumed universally writable.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

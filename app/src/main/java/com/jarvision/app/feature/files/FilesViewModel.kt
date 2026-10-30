@@ -27,6 +27,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 import java.util.UUID
 
 enum class StorageAccessMode {
@@ -49,6 +50,12 @@ data class FilesUiState(
     val entries: List<StorageEntry> = emptyList(),
     val isLoading: Boolean = false,
     val errorMessage: String? = null
+)
+
+data class StoragePathCapabilities(
+    val canCreateChildren: Boolean = false,
+    val canRename: Boolean = false,
+    val canDelete: Boolean = false
 )
 
 data class QuickAccessLocation(
@@ -384,6 +391,97 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
         withContext(Dispatchers.IO) {
             entryVisualLoadSemaphore.withPermit { entryVisualLoader.load(entry, state) }
         }
+
+    /**
+     * Path-specific write capability. This is an advisory check; the storage operation remains
+     * authoritative because filesystem and document-provider permissions can change at runtime.
+     */
+    suspend fun canWriteDirectory(
+        location: FolderLocation,
+        state: FilesUiState = mutableUiState.value
+    ): Boolean = withContext(Dispatchers.IO) {
+        when (state.accessMode) {
+            StorageAccessMode.SHARED_STORAGE -> runCatching {
+                val root = sharedStorageGateway.rootDirectory().canonicalFile
+                val requested = File(location.absolutePath ?: location.documentId).absoluteFile
+                val directory = requested.canonicalFile
+                directory.isDirectory &&
+                    (directory == root || directory.path.startsWith(root.path + File.separator)) &&
+                    directory.canWrite()
+            }.getOrDefault(false)
+
+            StorageAccessMode.DOCUMENT_TREE -> runCatching {
+                val treeUri = state.treeUriString?.let(Uri::parse) ?: return@runCatching false
+                val hasWriteGrant = getApplication<Application>().contentResolver.persistedUriPermissions.any {
+                    it.uri == treeUri && it.isWritePermission
+                }
+                hasWriteGrant && safGateway.getDocument(treeUri, location.documentId)?.isDirectory == true
+            }.getOrDefault(false)
+
+            StorageAccessMode.SHIZUKU_STORAGE -> runCatching {
+                val status = shizukuStorageAdapter.status.value
+                if (!status.isConnected || !status.permissionGranted) return@runCatching false
+                shizukuStorageAdapter.getOperationCapabilities(
+                    location.absolutePath ?: location.documentId
+                ).getBoolean(ShizukuStorageAdapter.KEY_CAN_CREATE_CHILDREN)
+            }.getOrDefault(false)
+
+            StorageAccessMode.NONE -> false
+        }
+    }
+
+    /** Path-specific mutation hints for the selected item, evaluated by its active backend. */
+    suspend fun getEntryCapabilities(
+        entry: StorageEntry,
+        parent: FolderLocation,
+        state: FilesUiState = mutableUiState.value
+    ): StoragePathCapabilities = withContext(Dispatchers.IO) {
+        when (state.accessMode) {
+            StorageAccessMode.SHARED_STORAGE -> runCatching {
+                val root = sharedStorageGateway.rootDirectory().canonicalFile
+                val parentDirectory = File(parent.absolutePath ?: parent.documentId).canonicalFile
+                val item = File(entry.absolutePath ?: entry.documentId).canonicalFile
+                val insideRoot = item.path.startsWith(root.path + File.separator)
+                val parentMatches = item.parentFile?.canonicalFile == parentDirectory
+                val allowed = parentDirectory.isDirectory && parentDirectory.canWrite() &&
+                    item.exists() && insideRoot && parentMatches
+                StoragePathCapabilities(
+                    canCreateChildren = entry.isDirectory && item.canWrite(),
+                    canRename = allowed,
+                    canDelete = allowed
+                )
+            }.getOrDefault(StoragePathCapabilities())
+
+            StorageAccessMode.DOCUMENT_TREE -> runCatching {
+                val treeUri = state.treeUriString?.let(Uri::parse) ?: return@runCatching StoragePathCapabilities()
+                val hasWriteGrant = getApplication<Application>().contentResolver.persistedUriPermissions.any {
+                    it.uri == treeUri && it.isWritePermission
+                }
+                val parentIsDirectory = safGateway.getDocument(treeUri, parent.documentId)?.isDirectory == true
+                val exists = safGateway.getDocument(treeUri, entry.documentId) != null
+                val canMutate = hasWriteGrant && parentIsDirectory && exists
+                StoragePathCapabilities(
+                    canCreateChildren = entry.isDirectory && canMutate,
+                    canRename = canMutate,
+                    canDelete = canMutate
+                )
+            }.getOrDefault(StoragePathCapabilities())
+
+            StorageAccessMode.SHIZUKU_STORAGE -> runCatching {
+                val status = shizukuStorageAdapter.status.value
+                if (!status.isConnected || !status.permissionGranted) return@runCatching StoragePathCapabilities()
+                val path = entry.absolutePath ?: return@runCatching StoragePathCapabilities()
+                val capabilities = shizukuStorageAdapter.getOperationCapabilities(path)
+                StoragePathCapabilities(
+                    canCreateChildren = capabilities.getBoolean(ShizukuStorageAdapter.KEY_CAN_CREATE_CHILDREN),
+                    canRename = capabilities.getBoolean(ShizukuStorageAdapter.KEY_CAN_RENAME),
+                    canDelete = capabilities.getBoolean(ShizukuStorageAdapter.KEY_CAN_DELETE)
+                )
+            }.getOrDefault(StoragePathCapabilities())
+
+            StorageAccessMode.NONE -> StoragePathCapabilities()
+        }
+    }
 
     private fun hasSharedStorageAccess(): Boolean {
         val application = getApplication<Application>()

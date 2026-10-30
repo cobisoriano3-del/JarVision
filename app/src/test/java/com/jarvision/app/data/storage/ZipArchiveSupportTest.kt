@@ -40,6 +40,41 @@ class ZipArchiveSupportTest {
     }
 
     @Test
+    fun listsExplicitAndImplicitFoldersWithFileSizes() {
+        val entries = ZipArchiveSupport.list(
+            ByteArrayInputStream(zipOf(
+                "docs/" to null,
+                "docs/nested/readme.txt" to "hello",
+                "top.txt" to "x"
+            ))
+        )
+
+        assertTrue(entries.any { it.path == "docs" && it.isDirectory })
+        assertTrue(entries.any { it.path == "docs/nested" && it.isDirectory })
+        assertEquals(5L, entries.single { it.path == "docs/nested/readme.txt" }.sizeBytes)
+        assertEquals(1L, entries.single { it.path == "top.txt" }.sizeBytes)
+    }
+
+    @Test
+    fun readsArchiveMemberWithPreviewLimit() {
+        val bytes = zipOf("docs/readme.txt" to "hello")
+        val contents = ZipArchiveSupport.readEntry(
+            ByteArrayInputStream(bytes),
+            "docs/readme.txt"
+        )
+        assertEquals("hello", String(contents, Charsets.UTF_8))
+
+        val error = runCatching {
+            ZipArchiveSupport.readEntry(
+                ByteArrayInputStream(bytes),
+                "docs/readme.txt",
+                maxBytes = 2
+            )
+        }.exceptionOrNull()
+        assertTrue(error is IOException)
+    }
+
+    @Test
     fun rejectsParentTraversal() {
         val error = runCatching {
             ZipArchiveSupport.test(ByteArrayInputStream(zipOf("../escaped.txt" to "nope")))
