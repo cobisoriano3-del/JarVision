@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feature/project-workspace
+      - feature/shared-workspace-transfers
   workflow_dispatch:
 
 permissions:

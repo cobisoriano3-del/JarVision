@@ -38,6 +38,10 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentCut
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.CreateNewFolder
@@ -111,10 +115,13 @@ private enum class WorkspaceNameDialogType {
 fun WorkspaceScreen(
     project: Project,
     viewModel: WorkspaceViewModel,
+    transferViewModel: WorkspaceTransferViewModel,
     onBack: () -> Unit
 ) {
     val state by viewModel.state.collectAsState()
+    val transferState by transferViewModel.state.collectAsState()
     val scope = rememberCoroutineScope()
+    var showDeleteSelectionConfirmation by remember { mutableStateOf(false) }
 
     var multiSelect by remember(project.id) { mutableStateOf(false) }
     var selectedPaths by remember(project.id) { mutableStateOf(emptySet<String>()) }
@@ -138,6 +145,10 @@ fun WorkspaceScreen(
 
     LaunchedEffect(state.relativeDirectory) {
         selectedPaths = emptySet()
+    }
+
+    LaunchedEffect(transferState.operationVersion, project.id, state.relativeDirectory) {
+        if (transferState.operationVersion > 0) viewModel.refresh()
     }
 
     BackHandler(enabled = multiSelect || state.relativeDirectory.isNotEmpty()) {
@@ -360,31 +371,131 @@ fun WorkspaceScreen(
             }
 
             if (multiSelect) {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 18.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
-                    Text(
-                        text = "${selectedPaths.size} selected",
-                        color = WorkspacePalette.AccentLight,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.weight(1f)
-                    )
-                    TextButton(
-                        onClick = { selectedPaths = state.entries.map { it.relativePath }.toSet() },
-                        enabled = state.entries.isNotEmpty()
-                    ) {
-                        Text("Select all", color = WorkspacePalette.AccentLight)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "${selectedPaths.size} selected",
+                            color = WorkspacePalette.AccentLight,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f)
+                        )
+                        TextButton(
+                            onClick = { selectedPaths = state.entries.map { it.relativePath }.toSet() },
+                            enabled = state.entries.isNotEmpty()
+                        ) { Text("Select all", color = WorkspacePalette.AccentLight) }
+                        TextButton(
+                            onClick = { selectedPaths = emptySet() },
+                            enabled = selectedPaths.isNotEmpty()
+                        ) { Text("Clear", color = WorkspacePalette.Muted) }
                     }
-                    TextButton(
-                        onClick = { selectedPaths = emptySet() },
-                        enabled = selectedPaths.isNotEmpty()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly,
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Clear", color = WorkspacePalette.Muted)
+                        TextButton(
+                            enabled = selectedPaths.isNotEmpty() && !state.isWorking && !transferState.isWorking,
+                            onClick = {
+                                val selected = state.entries.filter { it.relativePath in selectedPaths }
+                                transferViewModel.stageWorkspaceEntries(project.id, selected, cut = false)
+                                multiSelect = false
+                                selectedPaths = emptySet()
+                            }
+                        ) {
+                            Icon(Icons.Filled.ContentCopy, null, tint = WorkspacePalette.AccentLight)
+                            Spacer(Modifier.width(5.dp))
+                            Text("Copy", color = WorkspacePalette.AccentLight)
+                        }
+                        TextButton(
+                            enabled = selectedPaths.isNotEmpty() && !state.isWorking && !transferState.isWorking,
+                            onClick = {
+                                val selected = state.entries.filter { it.relativePath in selectedPaths }
+                                transferViewModel.stageWorkspaceEntries(project.id, selected, cut = true)
+                                multiSelect = false
+                                selectedPaths = emptySet()
+                            }
+                        ) {
+                            Icon(Icons.Filled.ContentCut, null, tint = WorkspacePalette.AccentLight)
+                            Spacer(Modifier.width(5.dp))
+                            Text("Cut", color = WorkspacePalette.AccentLight)
+                        }
+                        TextButton(
+                            enabled = selectedPaths.isNotEmpty() && !state.isWorking && !transferState.isWorking,
+                            onClick = { showDeleteSelectionConfirmation = true }
+                        ) {
+                            Icon(Icons.Filled.Delete, null, tint = WorkspacePalette.Error)
+                            Spacer(Modifier.width(5.dp))
+                            Text("Delete", color = WorkspacePalette.Error)
+                        }
+                        TextButton(
+                            enabled = transferState.clipboard?.sources?.isNotEmpty() == true &&
+                                !transferState.isWorking && !state.isWorking,
+                            onClick = {
+                                transferViewModel.pasteToWorkspace(project.id, state.relativeDirectory)
+                                selectedPaths = emptySet()
+                            }
+                        ) {
+                            Icon(Icons.Filled.ContentPaste, null, tint = WorkspacePalette.AccentLight)
+                            Spacer(Modifier.width(5.dp))
+                            Text("Paste", color = WorkspacePalette.AccentLight)
+                        }
                     }
                 }
+            }
+
+            if (!multiSelect && transferState.clipboard?.sources?.isNotEmpty() == true) {
+                val pending = transferState.clipboard!!
+                Surface(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 5.dp),
+                    shape = RoundedCornerShape(15.dp),
+                    color = WorkspacePalette.IconTile,
+                    border = BorderStroke(1.dp, WorkspacePalette.CardBorder)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = if (pending.isCut) "Ready to move" else "Copied to clipboard",
+                                color = WorkspacePalette.Text,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                text = "${pending.sources.size} item(s)",
+                                color = WorkspacePalette.Muted,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                        TextButton(
+                            enabled = !transferState.isWorking && !state.isWorking,
+                            onClick = {
+                                transferViewModel.pasteToWorkspace(project.id, state.relativeDirectory)
+                                selectedPaths = emptySet()
+                            }
+                        ) {
+                            Icon(Icons.Filled.ContentPaste, null, tint = WorkspacePalette.AccentLight)
+                            Spacer(Modifier.width(5.dp))
+                            Text("Paste here", color = WorkspacePalette.AccentLight)
+                        }
+                    }
+                }
+            }
+
+            transferState.message?.let { message ->
+                Text(
+                    text = message,
+                    color = if (message.contains("failed", ignoreCase = true) ||
+                        message.contains("could not", ignoreCase = true)) WorkspacePalette.Error
+                    else WorkspacePalette.Muted,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 3.dp)
+                )
             }
 
             when {
@@ -524,6 +635,40 @@ fun WorkspaceScreen(
                 ) {
                     Text("Cancel", color = WorkspacePalette.Muted)
                 }
+            }
+        )
+    }
+
+
+    if (showDeleteSelectionConfirmation) {
+        val selectedCount = selectedPaths.size
+        AlertDialog(
+            onDismissRequest = { if (!state.isWorking) showDeleteSelectionConfirmation = false },
+            containerColor = WorkspacePalette.Card,
+            title = {
+                Text("Delete ${selectedCount} item(s)?", color = WorkspacePalette.Text, fontWeight = FontWeight.SemiBold)
+            },
+            text = {
+                Text(
+                    "This permanently removes the selected workspace items and their contents. This cannot be undone.",
+                    color = WorkspacePalette.Muted
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !state.isWorking && selectedCount > 0,
+                    onClick = {
+                        viewModel.deleteEntries(selectedPaths)
+                        showDeleteSelectionConfirmation = false
+                        selectedPaths = emptySet()
+                    }
+                ) { Text(if (state.isWorking) "Deleting…" else "Delete", color = WorkspacePalette.Error) }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !state.isWorking,
+                    onClick = { showDeleteSelectionConfirmation = false }
+                ) { Text("Cancel", color = WorkspacePalette.Muted) }
             }
         )
     }

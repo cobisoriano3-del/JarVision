@@ -128,4 +128,110 @@ class ProjectRepositoryTest {
         assertEquals("", repo.readWorkspaceTextFile(project.id, file.relativePath))
     }
 
+
+    @Test
+    fun deleteProjectRemovesRegistryAndWorkspace() = withRepository { repo, _ ->
+        val project = repo.createProject("Delete me")
+        val workspace = File(project.directoryPath, "notes.txt")
+        workspace.writeText("private workspace")
+
+        assertTrue(repo.deleteProject(project.id))
+        assertTrue(repo.listProjects().isEmpty())
+        assertTrue(!File(project.directoryPath).exists())
+    }
+
+    @Test
+    fun failedProjectDeleteRestoresWorkspaceAndRegistry() = withRepository { repo, appFilesDir ->
+        val project = repo.createProject("Keep me")
+        File(project.directoryPath, "notes.txt").writeText("preserve")
+        val temporaryRegistry = File(appFilesDir, "projects/projects.properties.delete.tmp")
+        assertTrue(temporaryRegistry.mkdir())
+
+        try {
+            repo.deleteProject(project.id)
+            fail("Expected the registry write to fail")
+        } catch (_: IOException) {
+            // A directory at the temporary registry path prevents the new registry from being written.
+        }
+
+        assertEquals(listOf(project), repo.listProjects())
+        assertEquals("preserve", File(project.directoryPath, "notes.txt").readText())
+        assertTrue(File(project.directoryPath).isDirectory)
+    }
+
+    @Test
+    fun stagedWorkspaceFolderCanBeImportedIntoAnotherProjectWithoutOverwriting() = withRepository { repo, root ->
+        val sourceProject = repo.createProject("Source")
+        val destinationProject = repo.createProject("Destination")
+        val sourceFolder = repo.createWorkspaceFolder(sourceProject.id, "", "src")
+        val nested = repo.createWorkspaceTextFile(sourceProject.id, sourceFolder.relativePath, "main")
+        repo.writeWorkspaceTextFile(sourceProject.id, nested.relativePath, "println(42)")
+
+        val staged = File(root, "stage-src")
+        repo.stageWorkspaceEntry(sourceProject.id, sourceFolder.relativePath, staged)
+        repo.importStagedEntry(destinationProject.id, "", staged, "src-copy")
+
+        assertEquals(
+            "println(42)",
+            File(destinationProject.directoryPath, "src-copy/main.txt").readText()
+        )
+        assertTrue(repo.workspaceEntryExists(destinationProject.id, "", "SRC-COPY"))
+
+        try {
+            repo.importStagedEntry(destinationProject.id, "", staged, "src-copy")
+            fail("Expected destination collision rejection")
+        } catch (_: IOException) {
+            // Import must never overwrite an existing project item.
+        }
+
+        assertEquals(
+            "println(42)",
+            File(destinationProject.directoryPath, "src-copy/main.txt").readText()
+        )
+    }
+
+    @Test
+    fun stagedProjectContainsTheCompleteWorkspaceTree() = withRepository { repo, root ->
+        val project = repo.createProject("Publish me")
+        val folder = repo.createWorkspaceFolder(project.id, "", "assets")
+        val nestedFile = repo.createWorkspaceTextFile(project.id, folder.relativePath, "readme")
+        repo.writeWorkspaceTextFile(project.id, nestedFile.relativePath, "asset notes")
+        val staging = File(root, "publish-stage")
+
+        repo.stageProject(project.id, staging)
+
+        assertEquals("asset notes", File(staging, "assets/readme.txt").readText())
+        assertTrue(File(project.directoryPath, "assets/readme.txt").isFile)
+        assertEquals(listOf(project), repo.listProjects())
+    }
+
+    @Test
+    fun deleteWorkspaceEntryRemovesOnlyTheRequestedItem() = withRepository { repo, _ ->
+        val project = repo.createProject("Workspace delete")
+        val folder = repo.createWorkspaceFolder(project.id, "", "remove")
+        repo.createWorkspaceTextFile(project.id, "", "keep")
+        repo.createWorkspaceTextFile(project.id, folder.relativePath, "nested")
+
+        repo.deleteWorkspaceEntry(project.id, folder.relativePath)
+
+        assertTrue(!File(project.directoryPath, "remove").exists())
+        assertTrue(File(project.directoryPath, "keep.txt").isFile)
+    }
+
+
+    @Test
+    fun projectDirectoryMoveIsRecoveredAfterInterruptedDeletion() = withRepository { repo, _ ->
+        val project = repo.createProject("Recover me")
+        val originalDirectory = File(project.directoryPath)
+        File(originalDirectory, "notes.txt").writeText("recoverable")
+        val tombstone = File(originalDirectory.parentFile, ".deleted-${project.id}")
+        assertTrue(originalDirectory.renameTo(tombstone))
+
+        val recovered = repo.listProjects()
+
+        assertEquals(listOf(project), recovered)
+        assertEquals("recoverable", File(project.directoryPath, "notes.txt").readText())
+        assertTrue(!tombstone.exists())
+    }
+
 }

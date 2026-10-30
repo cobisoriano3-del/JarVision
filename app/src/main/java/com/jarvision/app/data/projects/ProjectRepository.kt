@@ -42,15 +42,44 @@ class ProjectRepository(private val appFilesDir: File) {
 
         // The registry has three properties per project. Enumerate IDs from .name keys only;
         // treating every key as an ID made each metadata lookup fail and hid every project.
-        return properties.stringPropertyNames()
+        val registeredIds = properties.stringPropertyNames()
             .asSequence()
             .filter { it.endsWith(".name") }
             .map { it.removeSuffix(".name") }
             .distinct()
+            .toSet()
+
+        // Recover if the process stopped after renaming the project directory but before the
+        // registry transaction committed. The deterministic tombstone preserves the old data.
+        registeredIds.forEach { id ->
+            val recordedPath = properties.getProperty("${id}.path") ?: return@forEach
+            val recordedDirectory = File(recordedPath).canonicalFile
+            if (recordedDirectory.parentFile != root.canonicalFile) {
+                throw IOException("Project ${id} points outside JarVision's projects directory.")
+            }
+            val tombstone = File(root, ".deleted-${id}")
+            if (!recordedDirectory.exists() && tombstone.exists()) {
+                try {
+                    Files.move(tombstone.toPath(), recordedDirectory.toPath())
+                } catch (error: Exception) {
+                    throw IOException("Project recovery is incomplete. Its workspace remains in ${tombstone.name}.", error)
+                }
+            }
+        }
+
+        // A tombstone without a registry record means deletion committed before shutdown.
+        root.listFiles()?.filter { it.name.startsWith(".deleted-") }?.forEach { tombstone ->
+            val id = tombstone.name.removePrefix(".deleted-")
+            if (id !in registeredIds && !tombstone.deleteRecursively()) {
+                throw IOException("Could not finish cleanup of deleted project data: ${tombstone.name}.")
+            }
+        }
+
+        return registeredIds.asSequence()
             .mapNotNull { id ->
-                val name = properties.getProperty("$id.name") ?: return@mapNotNull null
-                val path = properties.getProperty("$id.path") ?: return@mapNotNull null
-                val createdAt = properties.getProperty("$id.created")?.toLongOrNull() ?: 0L
+                val name = properties.getProperty("${id}.name") ?: return@mapNotNull null
+                val path = properties.getProperty("${id}.path") ?: return@mapNotNull null
+                val createdAt = properties.getProperty("${id}.created")?.toLongOrNull() ?: 0L
                 Project(id, name, path, createdAt)
             }
             .sortedByDescending { it.createdAtMillis }
@@ -113,6 +142,252 @@ class ProjectRepository(private val appFilesDir: File) {
         }
         return project
     }
+
+    @Synchronized
+    @Throws(IOException::class)
+    fun findProject(projectId: String): Project? =
+        listProjects().firstOrNull { it.id == projectId }
+
+    /**
+     * Renames the project directory to a tombstone before changing metadata. If the registry
+     * update fails, the original workspace is moved back and remains usable.
+     */
+    @Synchronized
+    @Throws(IOException::class)
+    fun deleteProject(projectId: String): Boolean {
+        val project = listProjects().firstOrNull { it.id == projectId }
+            ?: throw IOException("This project no longer exists.")
+        val projectDirectory = resolveProjectDirectory(projectId)
+        val tombstone = File(root, ".deleted-${projectId}")
+        if (tombstone.exists()) {
+            throw IOException("This project already has pending deletion recovery data.")
+        }
+        try {
+            try {
+                Files.move(projectDirectory.toPath(), tombstone.toPath(), StandardCopyOption.ATOMIC_MOVE)
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(projectDirectory.toPath(), tombstone.toPath())
+            }
+        } catch (error: Exception) {
+            throw IOException("Could not stage this project for deletion.", error)
+        }
+
+        val temporary = File(root, "projects.properties.delete.tmp")
+        try {
+            val properties = Properties()
+            if (registry.exists()) registry.inputStream().use(properties::load)
+            properties.remove("${projectId}.name")
+            properties.remove("${projectId}.path")
+            properties.remove("${projectId}.created")
+            FileOutputStream(temporary).use { output ->
+                properties.store(output, "JarVision project registry")
+                output.fd.sync()
+            }
+            try {
+                Files.move(
+                    temporary.toPath(),
+                    registry.toPath(),
+                    StandardCopyOption.ATOMIC_MOVE,
+                    StandardCopyOption.REPLACE_EXISTING
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(
+                    temporary.toPath(),
+                    registry.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING
+                )
+            }
+        } catch (error: Exception) {
+            temporary.delete()
+            try {
+                Files.move(tombstone.toPath(), projectDirectory.toPath())
+            } catch (restoreError: Exception) {
+                val recoveryWrite = runCatching {
+                    val recoveryProperties = Properties()
+                    if (registry.exists()) registry.inputStream().use(recoveryProperties::load)
+                    recoveryProperties.setProperty("${projectId}.name", project.name)
+                    recoveryProperties.setProperty("${projectId}.path", tombstone.absolutePath)
+                    recoveryProperties.setProperty("${projectId}.created", project.createdAtMillis.toString())
+                    val recoveryTemporary = File(root, "projects.properties.recovery.tmp")
+                    FileOutputStream(recoveryTemporary).use { output ->
+                        recoveryProperties.store(output, "JarVision project recovery registry")
+                        output.fd.sync()
+                    }
+                    try {
+                        Files.move(
+                            recoveryTemporary.toPath(),
+                            registry.toPath(),
+                            StandardCopyOption.ATOMIC_MOVE,
+                            StandardCopyOption.REPLACE_EXISTING
+                        )
+                    } catch (_: AtomicMoveNotSupportedException) {
+                        Files.move(
+                            recoveryTemporary.toPath(),
+                            registry.toPath(),
+                            StandardCopyOption.REPLACE_EXISTING
+                        )
+                    }
+                }
+                if (recoveryWrite.isSuccess) {
+                    throw IOException(
+                        "Project deletion was cancelled. Its workspace was preserved at a recovery path and remains registered; refresh the Projects tab.",
+                        restoreError
+                    )
+                }
+                throw IOException(
+                    "Project deletion could not finish. Recovery data remains at ${tombstone.name}, but both workspace restoration and registry repair failed.",
+                    recoveryWrite.exceptionOrNull() ?: restoreError
+                )
+            }
+            throw IOException("Could not update the project registry; the original project was restored.", error)
+        }
+
+        // False means registry removal committed but the hidden tombstone needs cleanup.
+        return tombstone.deleteRecursively()
+    }
+
+    @Synchronized
+    @Throws(IOException::class)
+    fun stageWorkspaceEntry(projectId: String, relativePath: String, destination: File) {
+        if (destination.exists()) throw IOException("The transfer staging target already exists.")
+        val projectRoot = resolveProjectDirectory(projectId)
+        rejectWorkspaceSymbolicLinks(projectRoot, relativePath)
+        val source = resolveWorkspacePath(projectRoot, relativePath, allowRoot = false)
+        if (!source.exists()) throw IOException("This workspace item no longer exists.")
+        copySafeWorkspaceTree(source, destination)
+    }
+
+    @Synchronized
+    @Throws(IOException::class)
+    fun importStagedEntry(
+        projectId: String,
+        parentRelativePath: String,
+        stagedSource: File,
+        targetName: String
+    ) {
+        val projectRoot = resolveProjectDirectory(projectId)
+        rejectWorkspaceSymbolicLinks(projectRoot, parentRelativePath)
+        val parent = resolveWorkspacePath(projectRoot, parentRelativePath, allowRoot = true)
+        if (!parent.isDirectory) throw IOException("The destination workspace folder no longer exists.")
+        val name = validateWorkspaceName(targetName)
+        val target = File(parent, name)
+        if (target.exists() || Files.isSymbolicLink(target.toPath())) {
+            throw IOException("An item with that name already exists.")
+        }
+        try {
+            copySafeWorkspaceTree(stagedSource, target)
+        } catch (error: Exception) {
+            if (target.exists() && !target.deleteRecursively()) {
+                throw IOException("The transfer failed and its partial destination could not be removed: ${target.name}.", error)
+            }
+            throw error
+        }
+    }
+
+    @Synchronized
+    @Throws(IOException::class)
+    fun deleteWorkspaceEntry(projectId: String, relativePath: String) {
+        val projectRoot = resolveProjectDirectory(projectId)
+        rejectWorkspaceSymbolicLinks(projectRoot, relativePath)
+        val target = resolveWorkspacePath(projectRoot, relativePath, allowRoot = false)
+        if (!target.exists()) throw IOException("This workspace item no longer exists.")
+        if (!target.deleteRecursively()) throw IOException("Could not completely delete ${target.name}.")
+    }
+
+    @Synchronized
+    @Throws(IOException::class)
+    fun workspaceEntryExists(projectId: String, parentRelativePath: String, name: String): Boolean {
+        val projectRoot = resolveProjectDirectory(projectId)
+        rejectWorkspaceSymbolicLinks(projectRoot, parentRelativePath)
+        val parent = resolveWorkspacePath(projectRoot, parentRelativePath, allowRoot = true)
+        if (!parent.isDirectory) throw IOException("The destination workspace folder no longer exists.")
+        return parent.listFiles()?.any { it.name.equals(name, ignoreCase = true) }
+            ?: throw IOException("Could not inspect the destination workspace folder.")
+    }
+
+    @Synchronized
+    @Throws(IOException::class)
+    fun stageProject(projectId: String, destination: File): Boolean {
+        if (destination.exists()) throw IOException("The project staging target already exists.")
+        val projectRoot = resolveProjectDirectory(projectId)
+        if (!destination.mkdir()) throw IOException("Could not create the project staging folder.")
+        try {
+            val children = projectRoot.listFiles() ?: throw IOException("Could not read the project workspace.")
+            children.forEach { child ->
+                if (Files.isSymbolicLink(child.toPath())) {
+                    throw IOException("A symbolic link was found in the project; publishing was stopped.")
+                }
+                copySafeWorkspaceTree(child, File(destination, child.name))
+            }
+            return true
+        } catch (error: Exception) {
+            if (!destination.deleteRecursively()) {
+                throw IOException("Project staging failed and temporary cleanup was incomplete.", error)
+            }
+            throw error
+        }
+    }
+
+    private fun rejectWorkspaceSymbolicLinks(projectRoot: File, relativePath: String) {
+        if (relativePath.isEmpty()) return
+        require(!relativePath.startsWith('/') && !relativePath.contains('\\')) {
+            "Workspace paths must be relative."
+        }
+        val rootPath = projectRoot.absoluteFile.toPath().normalize()
+        var current = rootPath
+        relativePath.split('/').forEach { segment ->
+            if (segment.isBlank() || segment == "." || segment == "..") {
+                throw IOException("The workspace path is invalid.")
+            }
+            current = current.resolve(segment)
+            if (Files.isSymbolicLink(current)) {
+                throw IOException("Symbolic links are not allowed in workspace transfers.")
+            }
+        }
+    }
+
+    private fun copySafeWorkspaceTree(source: File, destination: File) {
+        if (Files.isSymbolicLink(source.toPath())) {
+            throw IOException("Symbolic links are not allowed in workspace transfers.")
+        }
+        val canonicalSource = source.canonicalFile
+        if (!canonicalSource.exists()) throw IOException("The source item no longer exists.")
+        if (destination.exists() || Files.isSymbolicLink(destination.toPath())) {
+            throw IOException("An item with that name already exists.")
+        }
+        if (canonicalSource.isDirectory) {
+            if (!destination.mkdir()) throw IOException("Could not create the destination folder.")
+            try {
+                val children = canonicalSource.listFiles()
+                    ?: throw IOException("Could not read a source workspace folder.")
+                children.forEach { child ->
+                    val canonicalChild = child.canonicalFile
+                    if (canonicalChild.parentFile != canonicalSource ||
+                        Files.isSymbolicLink(child.toPath())
+                    ) throw IOException("A workspace folder contains an unsafe link.")
+                    copySafeWorkspaceTree(child, File(destination, child.name))
+                }
+            } catch (error: Exception) {
+                if (!destination.deleteRecursively()) {
+                    throw IOException("The copy failed and its partial folder could not be removed: ${destination.name}.", error)
+                }
+                throw error
+            }
+        } else {
+            destination.parentFile?.let {
+                if (!it.isDirectory) throw IOException("The destination parent folder is unavailable.")
+            }
+            try {
+                source.inputStream().buffered().use { input ->
+                    destination.outputStream().buffered().use { output -> input.copyTo(output) }
+                }
+            } catch (error: Exception) {
+                destination.delete()
+                throw error
+            }
+        }
+    }
+
     @Synchronized
     @Throws(IOException::class)
     fun listWorkspaceEntries(projectId: String, relativeDirectoryPath: String = ""): List<ProjectWorkspaceEntry> {

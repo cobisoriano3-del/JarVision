@@ -52,6 +52,126 @@ class FileOperationCoordinator(
         StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
     }
 
+
+    /** Stages an item from any Files backend into JarVision's private cache. */
+    fun stageStorageEntry(
+        mode: StorageAccessMode,
+        treeUriString: String?,
+        source: StorageEntry,
+        destination: File
+    ) {
+        if (destination.exists()) throw IOException("The transfer staging target already exists.")
+        stageStorageNode(mode, treeUriString, source, destination)
+    }
+
+    /**
+     * Publishes a staged item without overwriting an existing destination. Recursive failures
+     * roll back created children where the backend allows it and report incomplete cleanup.
+     */
+    fun publishStagedEntry(
+        mode: StorageAccessMode,
+        treeUriString: String?,
+        destinationParentDocumentId: String,
+        destinationParentAbsolutePath: String?,
+        source: File,
+        targetName: String
+    ): String {
+        validateName(targetName)
+        if (!source.exists() || Files.isSymbolicLink(source.toPath())) {
+            throw IOException("The staged transfer source is missing or unsafe.")
+        }
+        when (mode) {
+            StorageAccessMode.SHARED_STORAGE -> {
+                val parentPath = destinationParentAbsolutePath ?: destinationParentDocumentId
+                val parent = runCatching { checkedSharedDirectory(parentPath) }.getOrNull()
+                if (parent != null && parent.canWrite()) {
+                    val target = safeSharedChildTarget(parent, targetName)
+                    if (target.exists()) throw IOException("An item with that name already exists.")
+                    try {
+                        copyStagedNodeToShared(source, target)
+                    } catch (error: Exception) {
+                        if (target.exists() && !target.deleteRecursively()) {
+                            throw IOException(
+                                "The transfer failed and its partial destination could not be removed: \${target.path}.",
+                                error
+                            )
+                        }
+                        throw error
+                    }
+                } else {
+                    if (!shizukuCanWriteDirectory(parentPath)) {
+                        throw IOException("The destination folder is not writable through shared storage or the active Shizuku identity.")
+                    }
+                    val createdPaths = mutableListOf<String>()
+                    try {
+                        copyStagedNodeToShizuku(source, parentPath, targetName, createdPaths)
+                    } catch (error: Exception) {
+                        val failedCleanup = createdPaths.asReversed().filterNot { path ->
+                            runCatching { shizuku.deleteExistingItem(path) }.isSuccess
+                        }
+                        if (failedCleanup.isNotEmpty()) {
+                            throw IOException(
+                                "The transfer failed and \${failedCleanup.size} partial Shizuku destination item(s) could not be removed.",
+                                error
+                            )
+                        }
+                        throw error
+                    }
+                }
+            }
+            StorageAccessMode.DOCUMENT_TREE -> {
+                val treeUri = parseTreeUri(treeUriString)
+                requireWriteGrant(treeUri)
+                val parent = saf.getDocument(treeUri, destinationParentDocumentId)
+                    ?: throw IOException("The selected destination folder is no longer available.")
+                if (!parent.isDirectory) throw IOException("Choose a folder as the destination.")
+                val created = mutableListOf<Uri>()
+                try {
+                    copyStagedNodeToSaf(
+                        source,
+                        documentUri(treeUri, destinationParentDocumentId),
+                        targetName,
+                        created
+                    )
+                } catch (error: Exception) {
+                    val failedCleanup = created.asReversed().filterNot { uri ->
+                        runCatching { DocumentsContract.deleteDocument(resolver, uri) }.getOrDefault(false)
+                    }
+                    if (failedCleanup.isNotEmpty()) {
+                        throw IOException(
+                            "The transfer failed and ${failedCleanup.size} partial destination item(s) could not be removed.",
+                            error
+                        )
+                    }
+                    throw error
+                }
+            }
+            StorageAccessMode.SHIZUKU_STORAGE -> {
+                val parentPath = destinationParentAbsolutePath ?: destinationParentDocumentId
+                if (!shizukuCanWriteDirectory(parentPath)) {
+                    throw IOException("The active Shizuku identity cannot write to this destination folder.")
+                }
+                val createdPaths = mutableListOf<String>()
+                try {
+                    copyStagedNodeToShizuku(source, parentPath, targetName, createdPaths)
+                } catch (error: Exception) {
+                    val failedCleanup = createdPaths.asReversed().filterNot { path ->
+                        runCatching { shizuku.deleteExistingItem(path) }.isSuccess
+                    }
+                    if (failedCleanup.isNotEmpty()) {
+                        throw IOException(
+                            "The transfer failed and ${failedCleanup.size} partial Shizuku destination item(s) could not be removed.",
+                            error
+                        )
+                    }
+                    throw error
+                }
+            }
+            StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
+        }
+        return targetName
+    }
+
     fun findNamedChild(
         mode: StorageAccessMode,
         treeUriString: String?,
@@ -60,8 +180,13 @@ class FileOperationCoordinator(
         name: String
     ): StorageEntry? = when (mode) {
         StorageAccessMode.SHARED_STORAGE -> {
-            val parent = checkedSharedDirectory(parentAbsolutePath ?: parentDocumentId)
-            shared.listChildren(parent.path).firstOrNull {
+            val parentPath = parentAbsolutePath ?: parentDocumentId
+            runCatching {
+                shared.listChildren(checkedSharedDirectory(parentPath).path)
+            }.getOrElse { appError ->
+                if (!shizuku.status.value.isConnected) throw appError
+                shizuku.listChildren(parentPath)
+            }.firstOrNull {
                 it.displayName.equals(name, ignoreCase = true)
             }
         }
@@ -231,8 +356,21 @@ class FileOperationCoordinator(
     fun delete(mode: StorageAccessMode, treeUriString: String?, entry: StorageEntry) {
         when (mode) {
             StorageAccessMode.SHARED_STORAGE -> {
-                val file = checkedSharedFile(entry.absolutePath ?: entry.documentId)
-                if (!file.deleteRecursively()) throw IOException("Android couldn't delete this item.")
+                val path = entry.absolutePath ?: entry.documentId
+                val removedByApp = runCatching {
+                    checkedSharedFile(path).deleteRecursively()
+                }.getOrDefault(false)
+                if (!removedByApp) {
+                    val canDeleteThroughShizuku = shizuku.status.value.isConnected && runCatching {
+                        shizuku.getOperationCapabilities(path)
+                            .getBoolean(ShizukuStorageAdapter.KEY_CAN_DELETE)
+                    }.getOrDefault(false)
+                    if (canDeleteThroughShizuku) {
+                        shizuku.deleteExistingItem(path)
+                    } else {
+                        throw IOException("Android and the active Shizuku identity cannot delete this item.")
+                    }
+                }
             }
             StorageAccessMode.DOCUMENT_TREE -> {
                 val treeUri = parseTreeUri(treeUriString)
@@ -970,6 +1108,164 @@ class FileOperationCoordinator(
         } catch (error: Exception) {
             target.delete()
             throw error
+        }
+    }
+
+
+    private fun storageChildrenForTransfer(
+        mode: StorageAccessMode,
+        treeUriString: String?,
+        directory: StorageEntry
+    ): List<StorageEntry> = when (mode) {
+        StorageAccessMode.SHARED_STORAGE -> {
+            val path = directory.absolutePath ?: directory.documentId
+            runCatching { shared.listChildren(checkedSharedDirectory(path).path) }
+                .getOrElse { error ->
+                    if (!shizuku.status.value.isConnected) throw error
+                    shizuku.listChildren(path)
+                }
+        }
+        StorageAccessMode.DOCUMENT_TREE ->
+            saf.listChildren(parseTreeUri(treeUriString), directory.documentId)
+        StorageAccessMode.SHIZUKU_STORAGE ->
+            shizuku.listChildren(directory.absolutePath ?: directory.documentId)
+        StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
+    }
+
+    private fun stageStorageNode(
+        mode: StorageAccessMode,
+        treeUriString: String?,
+        source: StorageEntry,
+        destination: File
+    ) {
+        validateName(source.displayName)
+        if (destination.exists() || Files.isSymbolicLink(destination.toPath())) {
+            throw IOException("The transfer staging item already exists.")
+        }
+        if (source.isDirectory) {
+            if (!destination.mkdir()) throw IOException("Could not create a temporary transfer folder.")
+            try {
+                val children = storageChildrenForTransfer(mode, treeUriString, source)
+                children.forEach { child ->
+                    stageStorageNode(mode, treeUriString, child, File(destination, child.displayName))
+                }
+            } catch (error: Exception) {
+                if (!destination.deleteRecursively()) {
+                    throw IOException("Staging failed and temporary folder cleanup was incomplete: ${destination.name}.", error)
+                }
+                throw error
+            }
+        } else {
+            if (!destination.createNewFile()) throw IOException("Could not create a temporary transfer file.")
+            try {
+                val inputStream = if (mode == StorageAccessMode.SHARED_STORAGE) {
+                    runCatching { openInputStream(mode, treeUriString, source) }.getOrElse { appError ->
+                        val sourcePath = source.absolutePath ?: source.documentId
+                        if (!shizuku.status.value.isConnected) throw appError
+                        runCatching { shizuku.openReadOnlyInputStream(sourcePath) }.getOrElse { throw appError }
+                    }
+                } else {
+                    openInputStream(mode, treeUriString, source)
+                }
+                inputStream.buffered().use { input ->
+                    destination.outputStream().buffered().use { output -> input.copyTo(output) }
+                }
+            } catch (error: Exception) {
+                if (!destination.delete()) {
+                    throw IOException("Staging failed and the partial temporary file could not be removed: ${destination.name}.", error)
+                }
+                throw error
+            }
+        }
+    }
+
+    private fun copyStagedNodeToShared(source: File, target: File) {
+        if (Files.isSymbolicLink(source.toPath())) throw IOException("Symbolic links cannot be transferred.")
+        validateName(source.name)
+        if (target.exists() || Files.isSymbolicLink(target.toPath())) {
+            throw IOException("An item with that name already exists.")
+        }
+        if (source.isDirectory) {
+            if (!target.mkdir()) throw IOException("Could not create destination folder ${target.name}.")
+            try {
+                val children = source.listFiles() ?: throw IOException("Could not read a staged folder.")
+                children.sortedBy { it.name.lowercase(Locale.ROOT) }.forEach { child ->
+                    copyStagedNodeToShared(child, File(target, child.name))
+                }
+            } catch (error: Exception) {
+                if (!target.deleteRecursively()) {
+                    throw IOException("Copy failed and the partial folder could not be removed: ${target.path}.", error)
+                }
+                throw error
+            }
+        } else {
+            if (!target.createNewFile()) throw IOException("An item with that name already exists.")
+            try {
+                source.inputStream().buffered().use { input ->
+                    target.outputStream().buffered().use { output -> input.copyTo(output) }
+                }
+            } catch (error: Exception) {
+                if (!target.delete()) {
+                    throw IOException("Copy failed and the partial file could not be removed: ${target.path}.", error)
+                }
+                throw error
+            }
+        }
+    }
+
+    private fun copyStagedNodeToSaf(
+        source: File,
+        destinationParentUri: Uri,
+        targetName: String,
+        created: MutableList<Uri>
+    ) {
+        validateName(targetName)
+        if (Files.isSymbolicLink(source.toPath())) throw IOException("Symbolic links cannot be transferred.")
+        val mime = if (source.isDirectory) {
+            DocumentsContract.Document.MIME_TYPE_DIR
+        } else {
+            URLConnection.guessContentTypeFromName(targetName) ?: "application/octet-stream"
+        }
+        val targetUri = DocumentsContract.createDocument(resolver, destinationParentUri, mime, targetName)
+            ?: throw IOException("The storage provider could not create ${targetName}.")
+        created += targetUri
+        if (source.isDirectory) {
+            val children = source.listFiles() ?: throw IOException("Could not read a staged folder.")
+            children.sortedBy { it.name.lowercase(Locale.ROOT) }.forEach { child ->
+                copyStagedNodeToSaf(child, targetUri, child.name, created)
+            }
+        } else {
+            source.inputStream().buffered().use { input ->
+                resolver.openOutputStream(targetUri, "w").use { output ->
+                    if (output == null) throw IOException("The storage provider could not write ${targetName}.")
+                    input.copyTo(output)
+                }
+            }
+        }
+    }
+
+    private fun copyStagedNodeToShizuku(
+        source: File,
+        destinationParentPath: String,
+        targetName: String,
+        createdPaths: MutableList<String>
+    ) {
+        validateName(targetName)
+        if (Files.isSymbolicLink(source.toPath())) throw IOException("Symbolic links cannot be transferred.")
+        val targetPath = File(destinationParentPath, targetName).path
+        if (source.isDirectory) {
+            shizuku.createDirectory(destinationParentPath, targetName)
+            createdPaths += targetPath
+            val children = source.listFiles() ?: throw IOException("Could not read a staged folder.")
+            children.sortedBy { it.name.lowercase(Locale.ROOT) }.forEach { child ->
+                copyStagedNodeToShizuku(child, targetPath, child.name, createdPaths)
+            }
+        } else {
+            val output = shizuku.openNewFileForWrite(destinationParentPath, targetName)
+            createdPaths += targetPath
+            output.use { stream ->
+                source.inputStream().buffered().use { input -> input.copyTo(stream) }
+            }
         }
     }
 

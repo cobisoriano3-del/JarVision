@@ -28,6 +28,34 @@ class ProjectsViewModel(app: Application) : AndroidViewModel(app) {
             .onFailure { _errorMessage.value = it.message ?: "Could not load projects." }
     }
 
+
+    fun deleteProject(projectId: String) {
+        if (_isCreating.value) return
+        _isCreating.value = true
+        _errorMessage.value = null
+        viewModelScope.launch {
+            try {
+                val directoryRemoved = withContext(Dispatchers.IO) {
+                    repository.deleteProject(projectId)
+                }
+                _projects.value = _projects.value.filterNot { it.id == projectId }
+                if (!directoryRemoved) {
+                    _errorMessage.value = "The project was removed from the list, but hidden recovery data could not be cleaned up."
+                }
+            } catch (error: Exception) {
+                _errorMessage.value = error.message ?: "Could not delete this project."
+                runCatching {
+                    _projects.value = withContext(Dispatchers.IO) { repository.listProjects() }
+                }.onFailure {
+                    _errorMessage.value = (_errorMessage.value.orEmpty() + " " +
+                        (it.message ?: "Project recovery refresh failed.")).trim()
+                }
+            } finally {
+                _isCreating.value = false
+            }
+        }
+    }
+
     fun createProject(name: String) {
         if (_isCreating.value) return
         _isCreating.value = true; _errorMessage.value = null

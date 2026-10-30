@@ -160,6 +160,7 @@ import com.jarvision.app.data.storage.ShizukuStorageAdapter
 import com.jarvision.app.data.storage.ZipArchiveSupport
 import com.jarvision.app.data.storage.ZipArchiveBrowserEntry
 import com.jarvision.app.data.storage.StorageEntry
+import com.jarvision.app.feature.projects.WorkspaceTransferViewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -175,7 +176,8 @@ private data class PendingFileClipboard(
     val treeUriString: String?,
     val sourceParentDocumentId: String,
     val sourceParentAbsolutePath: String?,
-    val isCut: Boolean
+    val isCut: Boolean,
+    val clipboardId: String
 )
 
 private data class PasteConflict(
@@ -236,12 +238,14 @@ private data class SelectionCapabilities(
 @Composable
 fun FilesScreen(
     filesViewModel: FilesViewModel = viewModel(),
+    transferViewModel: WorkspaceTransferViewModel,
     onOpenSettings: () -> Unit = {},
     isActive: Boolean = true
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val state by filesViewModel.uiState.collectAsState()
+    val transferState by transferViewModel.state.collectAsState()
     val cetShortcuts by filesViewModel.cetShortcuts.collectAsState()
     val customFolderIconUris by filesViewModel.customFolderIconUris.collectAsState()
     val uiPreferences = remember(context) {
@@ -411,6 +415,20 @@ fun FilesScreen(
     var deleteEntry by remember { mutableStateOf<StorageEntry?>(null) }
     var clipboard by remember { mutableStateOf<PendingFileClipboard?>(null) }
     var pasteConflict by remember { mutableStateOf<PasteConflict?>(null) }
+
+    LaunchedEffect(transferState.clipboard?.id) {
+        val activeClipboardId = transferState.clipboard?.id
+        if (clipboard != null && clipboard?.clipboardId != activeClipboardId) {
+            clipboard = null
+            pasteConflict = null
+        }
+    }
+    LaunchedEffect(transferState.operationVersion, isActive) {
+        if (isActive && transferState.operationVersion > 0 && transferState.message != null) {
+            snackbarHostState.showSnackbar(transferState.message.orEmpty())
+            transferViewModel.clearMessage()
+        }
+    }
 
     val folderPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -707,8 +725,14 @@ fun FilesScreen(
             selectedEntry = null
             return
         }
-        clipboard = PendingFileClipboard(entries.toList(), state.accessMode, state.treeUriString,
-            parent.documentId, parent.absolutePath, cut)
+        val clipboardId = transferViewModel.stageStorageEntries(
+            entries, state.accessMode, state.treeUriString,
+            parent.documentId, parent.absolutePath, cut
+        )
+        clipboard = PendingFileClipboard(
+            entries.toList(), state.accessMode, state.treeUriString,
+            parent.documentId, parent.absolutePath, cut, clipboardId
+        )
         selectedEntry = null
         showMessage(if (cut) "${entries.size} item(s) marked for moving. Navigate to a destination and tap Paste."
             else "${entries.size} item(s) copied to JarVision's clipboard.")
@@ -717,6 +741,11 @@ fun FilesScreen(
     fun executePaste(pending: PendingFileClipboard, keepBoth: Boolean, replaceExisting: Boolean) {
         val destination = state.currentPath.lastOrNull() ?: return
         if (pending.entries.isEmpty()) { showMessage("The clipboard is empty."); return }
+        if (transferViewModel.state.value.clipboard?.id != pending.clipboardId) {
+            showMessage("The clipboard changed in another tab. Paste the current selection again.")
+            pasteConflict = null
+            return
+        }
         if (pending.accessMode != state.accessMode || pending.treeUriString != state.treeUriString ||
             !canMutateFiles
         ) {
@@ -736,6 +765,7 @@ fun FilesScreen(
             if (sameParent) {
                 clipboard = null
                 pasteConflict = null
+                transferViewModel.clearClipboard()
                 filesViewModel.clearSelection()
                 showMessage("These items are already in that folder.")
                 return
@@ -773,60 +803,131 @@ fun FilesScreen(
                     }
                 }
                 val failures = results.filter { it.second.isFailure }
-                clipboard = if (failures.isEmpty()) null else pending.copy(entries = failures.map { it.first })
+                val failedIds = failures.map { it.first.documentId }.toSet()
+                val sourceDeletePendingIds = results.filter { (_, result) ->
+                    result.getOrNull()?.contains("both copies remain", ignoreCase = true) == true
+                }.map { it.first.documentId }.toSet()
+                transferViewModel.completeLegacyStoragePaste(
+                    pending.clipboardId,
+                    failedIds,
+                    sourceDeletePendingIds
+                )
+                val remaining = results.filter { (entry, result) ->
+                    result.isFailure || entry.documentId in sourceDeletePendingIds
+                }.map { it.first }
+                clipboard = if (remaining.isEmpty() || sourceDeletePendingIds.isNotEmpty()) {
+                    null
+                } else {
+                    pending.copy(entries = remaining)
+                }
                 pasteConflict = null
-                filesViewModel.setSelectedEntries(failures.map { it.first.documentId })
+                filesViewModel.setSelectedEntries(remaining.map { it.documentId })
                 filesViewModel.refresh()
-                val succeeded = results.size - failures.size
-                showMessage(if (failures.isEmpty()) "$succeeded item(s) pasted successfully."
-                    else "$succeeded pasted; ${failures.size} failed. " +
-                        (failures.first().second.exceptionOrNull()?.message ?: "Failed items remain on the clipboard."))
+                val succeeded = results.size - remaining.size
+                showMessage(
+                    if (remaining.isEmpty()) "$succeeded item(s) pasted successfully."
+                    else "$succeeded completed; ${remaining.size} item(s) need attention and remain on the shared clipboard."
+                )
             } catch (error: Exception) { showMessage(error.message ?: "The file operation failed.") }
         }
     }
 
     fun requestPaste() {
-        val pending = clipboard ?: return
-        if (pending.entries.isEmpty()) { showMessage("The clipboard is empty."); return }
+        val sharedClipboard = transferViewModel.state.value.clipboard
+        if (sharedClipboard == null || sharedClipboard.sources.isEmpty()) {
+            showMessage("The clipboard is empty.")
+            return
+        }
         val destination = state.currentPath.lastOrNull() ?: return
-        if (pending.accessMode != state.accessMode || pending.treeUriString != state.treeUriString ||
-            !canMutateFiles
-        ) { showMessage("Paste is limited to the same writable storage scope."); return }
-        if (pending.entries.any { source -> source.isDirectory && state.currentPath.any { it.documentId == source.documentId } }) {
+        val onlyDeleteRetries = sharedClipboard.sources.all { it.sourceDeletePending }
+        if ((!canMutateFiles || state.accessMode == StorageAccessMode.NONE) && !onlyDeleteRetries) {
+            showMessage("Choose a writable destination folder before pasting.")
+            return
+        }
+
+        val localPending = clipboard
+        val localMatchesShared = localPending != null && localPending.clipboardId == sharedClipboard.id
+        val localCanUseExistingPaste = localMatchesShared &&
+            localPending!!.accessMode == state.accessMode &&
+            localPending.treeUriString == state.treeUriString &&
+            sharedClipboard.sources.none { it.sourceDeletePending }
+
+        // Cross-project, cross-backend, cross-SAF-tree, and restored clipboard operations all
+        // use the common staging coordinator. It handles conflicts by creating a unique name.
+        if (!localCanUseExistingPaste) {
+            pasteConflict = null
+            transferViewModel.pasteToStorage(
+                state.accessMode,
+                state.treeUriString,
+                destination.documentId,
+                destination.absolutePath
+            )
+            return
+        }
+
+        val pending = localPending!!
+        if (pending.entries.isEmpty()) {
+            showMessage("The clipboard is empty.")
+            return
+        }
+        if (pending.entries.any { source ->
+                source.isDirectory && state.currentPath.any { it.documentId == source.documentId }
+            }
+        ) {
             showMessage("A folder can't be pasted into itself or one of its subfolders.")
             return
         }
         if (pending.isCut) {
-            val sameParent = if (state.accessMode == StorageAccessMode.SHARED_STORAGE)
+            val sameParent = if (pending.accessMode == StorageAccessMode.SHARED_STORAGE) {
                 pending.sourceParentAbsolutePath == destination.absolutePath
-            else pending.sourceParentDocumentId == destination.documentId
+            } else {
+                pending.sourceParentDocumentId == destination.documentId
+            }
             if (sameParent) {
                 clipboard = null
+                pasteConflict = null
+                transferViewModel.clearClipboard()
                 filesViewModel.clearSelection()
                 showMessage("These items are already in that folder.")
                 return
             }
         }
+
         coroutineScope.launch {
             try {
                 val conflicts = withContext(Dispatchers.IO) {
                     pending.entries.mapNotNull { source ->
-                        fileOperations.findNamedChild(state.accessMode,state.treeUriString,
-                            destination.documentId,destination.absolutePath,source.displayName)?.let { source to it }
+                        fileOperations.findNamedChild(
+                            state.accessMode,
+                            state.treeUriString,
+                            destination.documentId,
+                            destination.absolutePath,
+                            source.displayName
+                        )?.let { source to it }
                     }
                 }
                 if (conflicts.isNotEmpty()) {
                     val sameSource = conflicts.any { (source, existing) ->
-                        if (state.accessMode == StorageAccessMode.SHARED_STORAGE) source.absolutePath == existing.absolutePath
-                        else source.documentId == existing.documentId
+                        if (state.accessMode == StorageAccessMode.SHARED_STORAGE) {
+                            source.absolutePath == existing.absolutePath
+                        } else {
+                            source.documentId == existing.documentId
+                        }
                     }
-                    pasteConflict = PasteConflict(pending, conflicts.map { it.second }, destination, sameSource)
-                } else executePaste(pending, keepBoth = false, replaceExisting = false)
-            } catch (error: Exception) { showMessage(error.message ?: "Couldn't check the paste destination.") }
+                    pasteConflict = PasteConflict(
+                        pending,
+                        conflicts.map { it.second },
+                        destination,
+                        sameSource
+                    )
+                } else {
+                    executePaste(pending, keepBoth = false, replaceExisting = false)
+                }
+            } catch (error: Exception) {
+                showMessage(error.message ?: "Couldn't check the paste destination.")
+            }
         }
     }
-
-
 
     fun renameSelected(entry: StorageEntry, newName: String) {
         val parent = state.currentPath.lastOrNull() ?: return
@@ -1197,12 +1298,11 @@ fun FilesScreen(
                         selectedItemsAreArchives = selectedItemsAreArchives,
                         visibleItemCount = visibleEntries.size,
                         canMutateFiles = canMutateFiles,
-                        clipboardPresent = clipboard != null,
-                        canPaste = clipboard?.let {
-                            it.entries.isNotEmpty() &&
-                                it.accessMode == state.accessMode &&
-                                it.treeUriString == state.treeUriString &&
-                                canMutateFiles
+                        clipboardPresent = transferState.clipboard != null,
+                        canPaste = transferState.clipboard?.let { pending ->
+                            pending.sources.isNotEmpty() && state.currentPath.isNotEmpty() && !transferState.isWorking &&
+                                ((canMutateFiles && state.accessMode != StorageAccessMode.NONE) ||
+                                    pending.sources.all { it.sourceDeletePending })
                         } == true,
                         needsSafWriteGrant = state.accessMode == StorageAccessMode.DOCUMENT_TREE &&
                             state.treeUriString?.let { value ->

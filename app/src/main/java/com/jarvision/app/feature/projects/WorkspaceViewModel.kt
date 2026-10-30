@@ -69,6 +69,46 @@ class WorkspaceViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+
+    fun deleteEntries(relativePaths: Collection<String>) {
+        val current = _state.value
+        val projectId = current.projectId ?: return
+        val directory = current.relativeDirectory
+        val selected = relativePaths.distinct().filter { it.isNotBlank() }
+        if (selected.isEmpty() || current.isWorking) return
+
+        viewModelScope.launch {
+            _state.update { it.copy(isWorking = true, errorMessage = null) }
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    val outcomes = selected.map { path ->
+                        path to runCatching { repository.deleteWorkspaceEntry(projectId, path) }
+                    }
+                    val remaining = repository.listWorkspaceEntries(projectId, directory)
+                    outcomes to remaining
+                }
+                val failures = result.first.filter { it.second.isFailure }
+                val succeeded = selected.size - failures.size
+                _state.update { state ->
+                    if (state.projectId == projectId && state.relativeDirectory == directory) {
+                        state.copy(
+                            entries = result.second,
+                            errorMessage = if (failures.isEmpty()) null else
+                                "$succeeded deleted; ${failures.size} failed. " +
+                                    (failures.first().second.exceptionOrNull()?.message ?: "Some items remain.")
+                        )
+                    } else state
+                }
+            } catch (error: Exception) {
+                _state.update {
+                    it.copy(errorMessage = error.message ?: "Could not delete the selected workspace items.")
+                }
+            } finally {
+                _state.update { it.copy(isWorking = false) }
+            }
+        }
+    }
+
     suspend fun readTextFile(projectId: String, relativePath: String): String =
         withContext(Dispatchers.IO) {
             repository.readWorkspaceTextFile(projectId, relativePath)

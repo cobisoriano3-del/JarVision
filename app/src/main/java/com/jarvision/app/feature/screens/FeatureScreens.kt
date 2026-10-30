@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Publish
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ViewWeek
 import androidx.compose.material.icons.filled.Workspaces
@@ -41,11 +43,20 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.content.Intent
+import android.net.Uri
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -54,6 +65,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.jarvision.app.ui.components.FeatureStatusScreen
 
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
 fun ProjectsScreen(
     searchQuery: String = "",
@@ -62,10 +74,36 @@ fun ProjectsScreen(
     isCreating: Boolean = false,
     errorMessage: String? = null,
     onCreateProject: (String) -> Unit = {},
-    onOpenProject: (com.jarvision.app.data.projects.Project) -> Unit = {}
+    onOpenProject: (com.jarvision.app.data.projects.Project) -> Unit = {},
+    onDeleteProject: (com.jarvision.app.data.projects.Project) -> Unit = {},
+    onPublishProject: (com.jarvision.app.data.projects.Project, String) -> Unit = { _, _ -> },
+    transferMessage: String? = null,
+    transferWorking: Boolean = false
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var projectName by remember { mutableStateOf("") }
+    var selectedProject by remember { mutableStateOf<com.jarvision.app.data.projects.Project?>(null) }
+    var deleteConfirmationProject by remember { mutableStateOf<com.jarvision.app.data.projects.Project?>(null) }
+    var pendingPublishProject by remember { mutableStateOf<com.jarvision.app.data.projects.Project?>(null) }
+    var publishError by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val publishFolderPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        val project = pendingPublishProject
+        pendingPublishProject = null
+        if (project == null || uri == null) return@rememberLauncherForActivityResult
+        try {
+            context.contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            onPublishProject(project, uri.toString())
+            publishError = null
+        } catch (error: Exception) {
+            publishError = error.message ?: "Could not grant access to the selected folder."
+        }
+    }
     val searching = searchQuery.isNotBlank()
     val visibleProjects = projects.filter { it.name.contains(searchQuery, ignoreCase = true) }
     val emblemSize = if (gridView) 116.dp else 138.dp
@@ -97,17 +135,26 @@ fun ProjectsScreen(
                 }
                 Spacer(Modifier.height(14.dp)); ProjectsDivider()
             } else Spacer(Modifier.height(8.dp))
-            if (visibleProjects.isNotEmpty()) {
+            if (transferWorking || transferMessage != null || publishError != null) {
+                Text(
+                    text = if (transferWorking) "Transfer in progress…" else publishError ?: transferMessage.orEmpty(),
+                    color = if (publishError != null || transferMessage?.contains("failed", true) == true)
+                        Color(0xFFFF9A9A) else Color(0xFFA7BEDB),
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(vertical = 6.dp)
+                )
+            }
+            if (visibleProjects.isNotEmpty())
                 if (gridView) {
                     androidx.compose.foundation.lazy.grid.LazyVerticalGrid(
                         columns = androidx.compose.foundation.lazy.grid.GridCells.Adaptive(minSize = 140.dp),
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         contentPadding = PaddingValues(vertical = 12.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) { items(visibleProjects, key = { it.id }) { project -> ProjectCard(project) { onOpenProject(project) } } }
+                    ) { items(visibleProjects, key = { it.id }) { project -> ProjectCard(project, onClick = { onOpenProject(project) }, onLongClick = { selectedProject = project }) } }
                 } else {
                     LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(visibleProjects, key = { it.id }) { project -> ProjectCard(project) { onOpenProject(project) } }
+                        items(visibleProjects, key = { it.id }) { project -> ProjectCard(project, onClick = { onOpenProject(project) }, onLongClick = { selectedProject = project }) }
                     }
                 }
             } else {
@@ -131,6 +178,110 @@ fun ProjectsScreen(
             ProjectsDivider(); Spacer(Modifier.height(8.dp))
         }
     }
+
+    selectedProject?.let { project ->
+        ModalBottomSheet(
+            onDismissRequest = { selectedProject = null },
+            containerColor = Color(0xFF071B30),
+            contentColor = Color(0xFFF4F7FF),
+            scrimColor = Color.Black.copy(alpha = 0.68f),
+            dragHandle = {
+                Surface(
+                    modifier = Modifier.padding(vertical = 10.dp).size(width = 38.dp, height = 4.dp),
+                    shape = RoundedCornerShape(4.dp),
+                    color = Color(0xFF4778A6)
+                ) {}
+            }
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    project.name,
+                    color = Color(0xFFF4F7FF),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1
+                )
+                Text("Project actions", color = Color(0xFFA7BEDB), style = MaterialTheme.typography.bodySmall)
+                Surface(
+                    modifier = Modifier.fillMaxWidth().clickable(enabled = !transferWorking) {
+                        selectedProject = null
+                        pendingPublishProject = project
+                        publishFolderPicker.launch(null)
+                    },
+                    color = Color(0xFF0A2B4B),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, Color(0xFF1A5489))
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 15.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.Publish, null, tint = Color(0xFF65B7FF))
+                        Spacer(Modifier.width(14.dp))
+                        Column {
+                            Text("Publish", color = Color(0xFFF4F7FF), fontWeight = FontWeight.SemiBold)
+                            Text("Export a copy to a selected storage folder.", color = Color(0xFFA7BEDB), style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                Surface(
+                    modifier = Modifier.fillMaxWidth().clickable(enabled = !transferWorking && !isCreating) {
+                        selectedProject = null
+                        deleteConfirmationProject = project
+                    },
+                    color = Color(0xFF2A1820),
+                    shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, Color(0xFF78404C))
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 15.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Filled.Delete, null, tint = Color(0xFFFF9696))
+                        Spacer(Modifier.width(14.dp))
+                        Column {
+                            Text("Delete", color = Color(0xFFFFB7B7), fontWeight = FontWeight.SemiBold)
+                            Text("Remove this project and its private workspace.", color = Color(0xFFC6AAB0), style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+            }
+        }
+    }
+
+    deleteConfirmationProject?.let { project ->
+        AlertDialog(
+            onDismissRequest = { if (!isCreating) deleteConfirmationProject = null },
+            containerColor = Color(0xFF091D33),
+            title = { Text("Delete ${project.name}?", color = Color(0xFFF4F7FF), fontWeight = FontWeight.SemiBold) },
+            text = {
+                Text(
+                    "This permanently removes the project workspace and its metadata. This cannot be undone.",
+                    color = Color(0xFFA7BEDB)
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !isCreating,
+                    onClick = {
+                        onDeleteProject(project)
+                        deleteConfirmationProject = null
+                    }
+                ) { Text(if (isCreating) "Deleting…" else "Delete", color = Color(0xFFFF9696)) }
+            },
+            dismissButton = {
+                TextButton(
+                    enabled = !isCreating,
+                    onClick = { deleteConfirmationProject = null }
+                ) { Text("Cancel", color = Color(0xFFA7BEDB)) }
+            }
+        )
+    }
+
     if (showCreateDialog) AlertDialog(
         onDismissRequest = { if (!isCreating) { showCreateDialog = false; projectName = "" } },
         containerColor = Color(0xFF091D33),
@@ -151,9 +302,14 @@ fun ProjectsScreen(
     )
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun ProjectCard(project: com.jarvision.app.data.projects.Project, onClick: () -> Unit) {
-    Surface(Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(18.dp), color = Color(0xFF091D33), border = BorderStroke(1.dp, Color(0xFF284967).copy(alpha = 0.8f))) {
+private fun ProjectCard(
+    project: com.jarvision.app.data.projects.Project,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit
+) {
+    Surface(Modifier.fillMaxWidth().combinedClickable(onClick = onClick, onLongClick = onLongClick), shape = RoundedCornerShape(18.dp), color = Color(0xFF091D33), border = BorderStroke(1.dp, Color(0xFF284967).copy(alpha = 0.8f))) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(Modifier.size(54.dp), shape = RoundedCornerShape(14.dp), color = Color(0xFF0A2745), border = BorderStroke(1.dp, Color(0xFF20476B))) {
                 Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.FolderOpen, null, Modifier.size(28.dp), tint = Color(0xFF369AFF)) }

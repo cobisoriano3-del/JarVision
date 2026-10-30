@@ -79,6 +79,7 @@ import com.jarvision.app.feature.screens.SettingsScreen
 import com.jarvision.app.feature.projects.ProjectsViewModel
 import com.jarvision.app.feature.projects.WorkspaceViewModel
 import com.jarvision.app.feature.projects.WorkspaceScreen
+import com.jarvision.app.feature.projects.WorkspaceTransferViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.collectAsState
 import com.jarvision.app.feature.tools.ToolsScreen
@@ -117,6 +118,8 @@ fun JarVisionApp() {
 
     val projectsViewModel: ProjectsViewModel = viewModel()
     val workspaceViewModel: WorkspaceViewModel = viewModel()
+    val transferViewModel: WorkspaceTransferViewModel = viewModel()
+    val transferState by transferViewModel.state.collectAsState()
     val projects by projectsViewModel.projects.collectAsState()
     val creatingProject by projectsViewModel.isCreating.collectAsState()
     val projectError by projectsViewModel.errorMessage.collectAsState()
@@ -367,7 +370,8 @@ fun JarVisionApp() {
             composable(Routes.FILES) {
                 FilesScreen(
                     isActive = currentRoute == Routes.FILES,
-                    onOpenSettings = { navigateTo(Routes.SETTINGS) }
+                    onOpenSettings = { navigateTo(Routes.SETTINGS) },
+                    transferViewModel = transferViewModel
                 )
             }
             composable(Routes.PROJECTS) {
@@ -378,7 +382,13 @@ fun JarVisionApp() {
                     isCreating = creatingProject,
                     errorMessage = projectError,
                     onCreateProject = projectsViewModel::createProject,
-                    onOpenProject = { project -> navigateTo("workspace/${project.id}") }
+                    onOpenProject = { project -> navigateTo("workspace/${project.id}") },
+                    onDeleteProject = { project -> projectsViewModel.deleteProject(project.id) },
+                    onPublishProject = { project, treeUri ->
+                        transferViewModel.publishProjectToSaf(project.id, treeUri)
+                    },
+                    transferMessage = transferState.message,
+                    transferWorking = transferState.isWorking
                 )
             }
             composable(Routes.TOOLS) {
@@ -401,6 +411,7 @@ fun JarVisionApp() {
                     WorkspaceScreen(
                         project = project,
                         viewModel = workspaceViewModel,
+                        transferViewModel = transferViewModel,
                         onBack = { navController.popBackStack() }
                     )
                 } else {
