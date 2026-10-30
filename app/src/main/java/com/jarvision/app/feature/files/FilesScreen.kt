@@ -368,6 +368,7 @@ fun FilesScreen(
         state.accessMode,
         state.treeUriString,
         state.currentPath.lastOrNull()?.documentId,
+        canMutateFiles,
         shizukuStatus.isConnected,
         shizukuStatus.permissionGranted,
         shizukuStatus.serviceUid
@@ -381,7 +382,8 @@ fun FilesScreen(
                 itemCapabilities += filesViewModel.getEntryCapabilities(entry, parent, state)
             }
             SelectionCapabilities(
-                canCopy = itemCapabilities.all { it.canRead },
+                canCopy = itemCapabilities.all { it.canRead } &&
+                    (state.accessMode != StorageAccessMode.DOCUMENT_TREE || canMutateFiles),
                 canCut = itemCapabilities.all { it.canRead && it.canDelete },
                 canDelete = itemCapabilities.all { it.canDelete }
             )
@@ -1416,7 +1418,12 @@ fun FilesScreen(
                                 compressName = defaultZipName(entry)
                                 compressEntries = listOf(entry)
                             }
-                            ContextActionRow("Copy", Icons.Filled.ContentCopy, enabled = selectedCapabilities.canRead) {
+                            ContextActionRow(
+                                "Copy",
+                                Icons.Filled.ContentCopy,
+                                enabled = selectedCapabilities.canRead &&
+                                    (state.accessMode != StorageAccessMode.DOCUMENT_TREE || canMutateFiles)
+                            ) {
                                 stageClipboard(listOf(entry), false)
                             }
                             ContextActionRow("Cut", Icons.Filled.ContentCut, enabled = selectedCapabilities.canDelete) {
@@ -1523,7 +1530,12 @@ fun FilesScreen(
                                 selectedEntry = null
                                 informationEntry = entry
                             }
-                            ContextActionRow("Copy", Icons.Filled.ContentCopy, enabled = selectedCapabilities.canRead) {
+                            ContextActionRow(
+                                "Copy",
+                                Icons.Filled.ContentCopy,
+                                enabled = selectedCapabilities.canRead &&
+                                    (state.accessMode != StorageAccessMode.DOCUMENT_TREE || canMutateFiles)
+                            ) {
                                 stageClipboard(listOf(entry), false)
                             }
                             ContextActionRow("Cut", Icons.Filled.ContentCut, enabled = selectedCapabilities.canDelete) {
