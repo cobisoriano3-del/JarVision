@@ -1228,8 +1228,20 @@ fun FilesScreen(
                         onDeleteSelected = { bulkDeleteConfirmation = true },
                         onCompressSelected = {
                             if (selectedEntries.isNotEmpty()) {
+                                compressAsSevenZip = false
                                 compressEntries = selectedEntries
                                 compressName = if (selectedEntries.size == 1) defaultZipName(selectedEntries.first()) else "Selected items.zip"
+                            }
+                        },
+                        onCompressSelectedSevenZip = {
+                            if (selectedEntries.isNotEmpty()) {
+                                compressAsSevenZip = true
+                                compressEntries = selectedEntries
+                                compressName = if (selectedEntries.size == 1) {
+                                    defaultSevenZipName(selectedEntries.first())
+                                } else {
+                                    "Selected items.7z"
+                                }
                             }
                         },
                         onExtractSelected = { extractSelectedArchives(selectedEntries) },
@@ -1367,6 +1379,7 @@ fun FilesScreen(
                     filesViewModel.getEntryCapabilities(entry, it, state)
                 } ?: StoragePathCapabilities()
             }
+            val canCompressEntry = canWriteExistingItems && selectedCapabilities.canRead
             val isZipContainer = supportsZipExtraction(entry)
             val canExtractInCurrentFolder = canWriteExistingItems && isZipContainer
             val canChooseExtractionDestination =
@@ -1391,18 +1404,19 @@ fun FilesScreen(
                             ContextActionRow(
                                 "Compress to *.zip",
                                 Icons.Filled.Archive,
-                                enabled = canWriteExistingItems
+                                enabled = canCompressEntry
                             ) {
                                 selectedEntry = null
+                                compressAsSevenZip = false
                                 compressName = defaultZipName(entry)
                                 compressEntries = listOf(entry)
                             }
                             ContextActionRow(
                                 "Compress to *.7z",
                                 Icons.Filled.Archive,
-                                enabled = canWriteExistingItems,
-                                supportingText = if (canWriteExistingItems) "Create a 7z archive copy in this folder."
-                                    else "The current destination is not writable."
+                                enabled = canCompressEntry,
+                                supportingText = if (canCompressEntry) "Create a 7z archive copy in this folder."
+                                    else "The source or destination is not accessible for compression."
                             ) {
                                 selectedEntry = null
                                 compressAsSevenZip = true
@@ -1412,9 +1426,10 @@ fun FilesScreen(
                             ContextActionRow(
                                 "Compress",
                                 Icons.Filled.Archive,
-                                enabled = canWriteExistingItems
+                                enabled = canCompressEntry
                             ) {
                                 selectedEntry = null
+                                compressAsSevenZip = false
                                 compressName = defaultZipName(entry)
                                 compressEntries = listOf(entry)
                             }
@@ -1504,12 +1519,24 @@ fun FilesScreen(
                                 requestArchiveDestination(entry)
                             }
                             ContextActionRow(
-                                "Compress",
+                                "Compress to *.7z",
                                 Icons.Filled.Archive,
-                                enabled = canWriteExistingItems,
-                                supportingText = if (!canWriteExistingItems) "Compression requires a writable destination." else null
+                                enabled = canCompressEntry,
+                                supportingText = if (!canCompressEntry) "The source or destination is not accessible for compression." else null
                             ) {
                                 selectedEntry = null
+                                compressAsSevenZip = true
+                                compressName = defaultSevenZipName(entry)
+                                compressEntries = listOf(entry)
+                            }
+                            ContextActionRow(
+                                "Compress",
+                                Icons.Filled.Archive,
+                                enabled = canCompressEntry,
+                                supportingText = if (!canCompressEntry) "The source or destination is not accessible for compression." else null
+                            ) {
+                                selectedEntry = null
+                                compressAsSevenZip = false
                                 compressName = defaultZipName(entry)
                                 compressEntries = listOf(entry)
                             }
@@ -1517,12 +1544,24 @@ fun FilesScreen(
 
                         else -> {
                             ContextActionRow(
-                                "Compress",
+                                "Compress to *.7z",
                                 Icons.Filled.Archive,
-                                enabled = canWriteExistingItems,
-                                supportingText = if (!canWriteExistingItems) "Compression requires writable storage." else null
+                                enabled = canCompressEntry,
+                                supportingText = if (!canCompressEntry) "The source or destination is not accessible for compression." else null
                             ) {
                                 selectedEntry = null
+                                compressAsSevenZip = true
+                                compressName = defaultSevenZipName(entry)
+                                compressEntries = listOf(entry)
+                            }
+                            ContextActionRow(
+                                "Compress",
+                                Icons.Filled.Archive,
+                                enabled = canCompressEntry,
+                                supportingText = if (!canCompressEntry) "The source or destination is not accessible for compression." else null
+                            ) {
+                                selectedEntry = null
+                                compressAsSevenZip = false
                                 compressName = defaultZipName(entry)
                                 compressEntries = listOf(entry)
                             }
@@ -2076,6 +2115,7 @@ private fun FileBrowserToolbar(
     onToggleMultiSelect: () -> Unit,
     onDeleteSelected: () -> Unit,
     onCompressSelected: () -> Unit,
+    onCompressSelectedSevenZip: () -> Unit,
     onExtractSelected: () -> Unit,
     onTestSelected: () -> Unit,
     onCopySelected: () -> Unit,
@@ -2321,10 +2361,14 @@ private fun FileBrowserToolbar(
                     border = BorderStroke(1.dp, Color(0xFF1D5A96).copy(alpha = 0.9f))
                 ) {
                     if (selectionMode) {
-                        DropdownMenuItem(text = { Text("Compress…") },
+                        DropdownMenuItem(text = { Text("Compress to ZIP…") },
                             leadingIcon = { Icon(Icons.Filled.Archive, contentDescription = null) },
-                            enabled = selectionHasItems && canMutateFiles,
+                            enabled = selectionHasItems && canCopySelected && canMutateFiles,
                             onClick = { overflowExpanded = false; onCompressSelected() })
+                        DropdownMenuItem(text = { Text("Compress to 7z…") },
+                            leadingIcon = { Icon(Icons.Filled.Archive, contentDescription = null) },
+                            enabled = selectionHasItems && canCopySelected && canMutateFiles,
+                            onClick = { overflowExpanded = false; onCompressSelectedSevenZip() })
                         DropdownMenuItem(text = { Text("Copy") },
                             leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
                             enabled = selectionHasItems && canCopySelected,

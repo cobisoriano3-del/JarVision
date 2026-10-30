@@ -101,33 +101,42 @@ object ZipArchiveSupport {
         require(maxBytes > 0) { "The preview limit must be positive." }
         val targetPath = safeEntryPath(requestedPath).replace(File.separatorChar, '/')
         val seen = mutableSetOf<String>()
+        var entryCount = 0
+        var expandedBytes = 0L
         validatedZipInput(input).use { zip ->
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
             var entry = zip.nextEntry
             while (entry != null) {
+                entryCount++
+                if (entryCount > MAX_ENTRIES) {
+                    throw IOException("The ZIP contains too many entries (limit: " + MAX_ENTRIES + ").")
+                }
                 val path = safeEntryPath(entry.name).replace(File.separatorChar, '/')
                 if (!seen.add(path)) throw IOException("The ZIP contains a duplicate entry.")
                 if (path == targetPath) {
                     if (entry.isDirectory) throw IOException("Folders cannot be previewed as files.")
                     val output = java.io.ByteArrayOutputStream()
+                    var entryBytes = 0L
                     while (true) {
                         val read = zip.read(buffer)
                         if (read < 0) break
+                        entryBytes += read.toLong()
+                        expandedBytes += read.toLong()
+                        checkLimits(entryBytes, expandedBytes)
                         if (output.size() + read > maxBytes) {
-                            throw IOException("This archive item exceeds the 1 MiB in-app preview limit.")
+                            throw IOException("This archive item exceeds the in-app preview limit.")
                         }
                         output.write(buffer, 0, read)
                     }
                     return output.toByteArray()
                 }
-                var skipped = 0
+                var skippedBytes = 0L
                 while (true) {
                     val read = zip.read(buffer)
                     if (read < 0) break
-                    skipped += read
-                    if (skipped > MAX_ENTRY_BYTES) {
-                        throw IOException("An archive item exceeds the 256 MiB expanded-size limit.")
-                    }
+                    skippedBytes += read.toLong()
+                    expandedBytes += read.toLong()
+                    checkLimits(skippedBytes, expandedBytes)
                 }
                 zip.closeEntry()
                 entry = zip.nextEntry
