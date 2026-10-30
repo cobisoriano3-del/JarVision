@@ -866,6 +866,15 @@ class FileOperationCoordinator(
         }
     }
 
+    /** Returns whether the active Shizuku identity can create children in this exact directory. */
+    private fun shizukuCanWriteDirectory(path: String): Boolean {
+        if (!shizuku.status.value.isConnected) return false
+
+        return runCatching {
+            shizuku.getOperationCapabilities(path)
+                .getBoolean(ShizukuStorageAdapter.KEY_CAN_CREATE_CHILDREN)
+        }.getOrDefault(false)
+    }
     private fun checkedSharedDirectory(path: String): File {
         val root = shared.rootDirectory().canonicalFile
         val requested = File(path).absoluteFile
