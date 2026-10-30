@@ -131,12 +131,12 @@ class ShizukuStorageUserService : IShizukuStorageService.Stub() {
             val file = checkedMutationPath(path)
             val root = checkedMutationPath(SHARED_STORAGE_ROOT)
             val isRoot = file.canonicalFile == root.canonicalFile
-            val parentWritable = file.parentFile?.let(::canCreateAndDeleteProbe) == true
+            val parentWritable = file.parentFile?.let(::canWriteDirectory) == true
             Bundle().apply {
                 putBoolean(KEY_EXISTS, file.exists())
                 putBoolean(KEY_IS_DIRECTORY, file.isDirectory)
                 putBoolean(KEY_CAN_READ, file.exists() && file.canRead() && (!file.isDirectory || file.listFiles() != null))
-                putBoolean(KEY_CAN_CREATE_CHILDREN, file.isDirectory && canCreateAndDeleteProbe(file))
+                putBoolean(KEY_CAN_CREATE_CHILDREN, file.isDirectory && canWriteDirectory(file))
                 putBoolean(KEY_CAN_RENAME, file.exists() && !isRoot && parentWritable)
                 putBoolean(KEY_CAN_DELETE, file.exists() && !isRoot && parentWritable)
             }
@@ -335,22 +335,12 @@ class ShizukuStorageUserService : IShizukuStorageService.Stub() {
         }
     }
 
-    /** Probes actual create/delete ability under the UserService identity, not the app process. */
-    private fun canCreateAndDeleteProbe(directory: File): Boolean {
-        if (!directory.isDirectory) return false
-        var probe: File? = null
-        return try {
-            probe = File.createTempFile(".jarvision-capability-", ".tmp", directory)
-            probe.delete() && !probe.exists()
-        } catch (_: Exception) {
-            false
-        } finally {
-            probe?.takeIf { it.exists() }?.delete()
-        }
-    }
+    /** Non-mutating capability hint evaluated in the UserService process identity. Actual calls still handle denials. */
+    private fun canWriteDirectory(directory: File): Boolean =
+        directory.isDirectory && directory.canRead() && directory.canWrite()
 
     private fun ensureWritableDirectory(directory: File) {
-        if (!canCreateAndDeleteProbe(directory)) {
+        if (!canWriteDirectory(directory)) {
             throw RemoteException("The active Shizuku identity cannot create and remove items in this folder.")
         }
     }
