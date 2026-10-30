@@ -185,7 +185,7 @@ fun WorkspaceScreen(
 
     fun requestCloseEditor() {
         if (editorSaving) return
-        if (!editorLoading && editorError == null && editorText != originalEditorText) {
+        if (!editorLoading && editorText != originalEditorText) {
             showDiscardEditorChanges = true
         } else {
             editingEntry = null
@@ -556,7 +556,7 @@ fun WorkspaceScreen(
                         }
                         OutlinedTextField(
                             value = editorText,
-                            onValueChange = { editorText = it },
+                            onValueChange = { editorText = it; editorError = null },
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .heightIn(min = 220.dp, max = 420.dp),
