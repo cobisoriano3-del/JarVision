@@ -63,6 +63,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavType
+import androidx.navigation.navArgument
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -75,6 +77,8 @@ import com.jarvision.app.feature.screens.EditorScreen
 import com.jarvision.app.feature.screens.ProjectsScreen
 import com.jarvision.app.feature.screens.SettingsScreen
 import com.jarvision.app.feature.projects.ProjectsViewModel
+import com.jarvision.app.feature.projects.WorkspaceViewModel
+import com.jarvision.app.feature.projects.WorkspaceScreen
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.compose.runtime.collectAsState
 import com.jarvision.app.feature.tools.ToolsScreen
@@ -88,6 +92,7 @@ private object Routes {
     const val DUAL_SPACE = "dual-space"
     const val ADVANCED_ACCESS = "advanced-access"
     const val SETTINGS = "settings"
+    const val WORKSPACE = "workspace/{projectId}"
 }
 
 private data class MainTab(
@@ -111,6 +116,7 @@ fun JarVisionApp() {
     )
 
     val projectsViewModel: ProjectsViewModel = viewModel()
+    val workspaceViewModel: WorkspaceViewModel = viewModel()
     val projects by projectsViewModel.projects.collectAsState()
     val creatingProject by projectsViewModel.isCreating.collectAsState()
     val projectError by projectsViewModel.errorMessage.collectAsState()
@@ -241,7 +247,7 @@ fun JarVisionApp() {
                         }
                     }
                 }
-                currentRoute != Routes.FILES -> {
+                currentRoute != Routes.FILES && currentRoute != Routes.WORKSPACE -> {
                     val toolbarTitle = when (currentRoute) {
                         Routes.EDITOR -> "Universal Editor"
                         Routes.ARCHIVES -> "Archive Tools"
@@ -365,7 +371,15 @@ fun JarVisionApp() {
                 )
             }
             composable(Routes.PROJECTS) {
-                ProjectsScreen(searchQuery, gridView, projects, creatingProject, projectError, projectsViewModel::createProject)
+                ProjectsScreen(
+                    searchQuery = searchQuery,
+                    gridView = gridView,
+                    projects = projects,
+                    isCreating = creatingProject,
+                    errorMessage = projectError,
+                    onCreateProject = projectsViewModel::createProject,
+                    onOpenProject = { project -> navigateTo("workspace/${project.id}") }
+                )
             }
             composable(Routes.TOOLS) {
                 ToolsScreen(
@@ -376,6 +390,24 @@ fun JarVisionApp() {
                     searchQuery = searchQuery,
                     gridView = gridView
                 )
+            }
+            composable(
+                route = Routes.WORKSPACE,
+                arguments = listOf(navArgument("projectId") { type = NavType.StringType })
+            ) { workspaceEntry ->
+                val projectId = workspaceEntry.arguments?.getString("projectId")
+                val project = projects.firstOrNull { it.id == projectId }
+                if (project != null) {
+                    WorkspaceScreen(
+                        project = project,
+                        viewModel = workspaceViewModel,
+                        onBack = { navController.popBackStack() }
+                    )
+                } else {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text("Project workspace not found.", color = MaterialTheme.colorScheme.onBackground)
+                    }
+                }
             }
             composable(Routes.EDITOR) { EditorScreen() }
             composable(Routes.ARCHIVES) { ArchivesScreen() }

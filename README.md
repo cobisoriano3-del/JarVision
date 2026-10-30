@@ -17,7 +17,9 @@ JarVision is a native Android file manager and universal code workspace. It aims
 
 Archive support includes in-app browsing of ZIP-compatible containers, bounded read-only text-member previews, streaming ZIP compression, 7z compression with LZMA2, ZIP testing, and ZIP extraction here or into a new folder. Writable output can use shared storage, SAF, or capability-approved Shizuku destinations. ZIP extraction rejects absolute/traversal paths, duplicate normalized entries, more than 10,000 entries, any entry over 256 MiB expanded, and total expansion over 1 GiB. Archive output and extraction are staged in private cache and published without silently overwriting existing items. The folder-thumbnail loader checks `folder.jpg`, `folder.jpeg`, `folder.png`, `folder.webp`, `.foldericon`, `.foldericon.jpg`, `cover.jpg`, `cover.png`, or `thumbnail.jpg` inside each folder. Missing or inaccessible images use a folder-name-based fallback icon.
 
-**Still planned:** recursive global search, persistent project workspaces, the universal editor, Dual Space, recoverable trash, background/progress reporting for large operations, 7z extraction and in-app 7z browsing, broader archive-format support, and additional device/provider testing.
+**Implemented:** Project workspaces are private to each project and support nested folder browsing, folder and text-file creation, rename, multi-select, and a bounded 1 MiB text editor. Text saves are staged to a temporary file before replacing the target.
+
+**Still planned:** recursive global search, the universal editor, Dual Space, recoverable trash, background/progress reporting for large operations, 7z extraction and in-app 7z browsing, broader archive-format support, and additional device/provider testing.
 
 ## Storage permissions and platform limits
 
