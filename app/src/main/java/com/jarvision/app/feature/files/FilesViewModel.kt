@@ -444,13 +444,13 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
                 val item = File(entry.absolutePath ?: entry.documentId).canonicalFile
                 val insideRoot = item.path.startsWith(root.path + File.separator)
                 val parentMatches = item.parentFile?.canonicalFile == parentDirectory
-                val canRead = item.exists() && item.canRead() &&
+                val canRead = insideRoot && item.exists() && item.canRead() &&
                     (!item.isDirectory || item.listFiles() != null)
                 val allowed = parentDirectory.isDirectory && parentDirectory.canWrite() &&
                     item.exists() && insideRoot && parentMatches
                 StoragePathCapabilities(
                     canRead = canRead,
-                    canCreateChildren = entry.isDirectory && item.isDirectory && item.canWrite(),
+                    canCreateChildren = insideRoot && entry.isDirectory && item.isDirectory && item.canWrite(),
                     canRename = allowed,
                     canDelete = allowed
                 )
@@ -458,14 +458,14 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
 
             StorageAccessMode.DOCUMENT_TREE -> runCatching {
                 val treeUri = state.treeUriString?.let(Uri::parse) ?: return@runCatching StoragePathCapabilities()
-                val hasWriteGrant = getApplication<Application>().contentResolver.persistedUriPermissions.any {
-                    it.uri == treeUri && it.isWritePermission
-                }
+                val grants = getApplication<Application>().contentResolver.persistedUriPermissions
+                val hasReadGrant = grants.any { it.uri == treeUri && it.isReadPermission }
+                val hasWriteGrant = grants.any { it.uri == treeUri && it.isWritePermission }
                 val parentIsDirectory = safGateway.getDocument(treeUri, parent.documentId)?.isDirectory == true
                 val exists = safGateway.getDocument(treeUri, entry.documentId) != null
                 val canMutate = hasWriteGrant && parentIsDirectory && exists
                 StoragePathCapabilities(
-                    canRead = exists,
+                    canRead = hasReadGrant && exists,
                     canCreateChildren = entry.isDirectory && canMutate,
                     canRename = canMutate,
                     canDelete = canMutate
