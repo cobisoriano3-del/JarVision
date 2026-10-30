@@ -226,6 +226,11 @@ private data class ArchiveBrowserSession(
     val archive: StorageEntry,
     val entries: List<ZipArchiveBrowserEntry>
 )
+private data class SelectionCapabilities(
+    val canCopy: Boolean = false,
+    val canCut: Boolean = false,
+    val canDelete: Boolean = false
+)
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
@@ -356,6 +361,31 @@ fun FilesScreen(
     }
     val selectedEntries = remember(state.entries, selectedEntryIds) {
         state.entries.filter { it.documentId in selectedEntryIds }
+    }
+    val selectedCapabilities by produceState(
+        initialValue = SelectionCapabilities(),
+        selectedEntries.map { it.documentId },
+        state.accessMode,
+        state.treeUriString,
+        state.currentPath.lastOrNull()?.documentId,
+        shizukuStatus.isConnected,
+        shizukuStatus.permissionGranted,
+        shizukuStatus.serviceUid
+    ) {
+        val parent = state.currentPath.lastOrNull()
+        value = if (parent == null || selectedEntries.isEmpty()) {
+            SelectionCapabilities()
+        } else {
+            val itemCapabilities = mutableListOf<StoragePathCapabilities>()
+            for (entry in selectedEntries) {
+                itemCapabilities += filesViewModel.getEntryCapabilities(entry, parent, state)
+            }
+            SelectionCapabilities(
+                canCopy = itemCapabilities.all { it.canRead },
+                canCut = itemCapabilities.all { it.canRead && it.canDelete },
+                canDelete = itemCapabilities.all { it.canDelete }
+            )
+        }
     }
     val selectedItemsAreArchives = selectedEntries.isNotEmpty() && selectedEntries.all {
         !it.isDirectory && it.displayName.lowercase(Locale.ROOT).endsWith(".zip")
@@ -670,8 +700,8 @@ fun FilesScreen(
     fun stageClipboard(entries: List<StorageEntry>, cut: Boolean) {
         val parent = state.currentPath.lastOrNull() ?: return
         if (entries.isEmpty()) return
-        if (state.accessMode == StorageAccessMode.NONE || !canMutateFiles) {
-            showMessage("The current folder is not writable through the active storage backend.")
+        if (state.accessMode == StorageAccessMode.NONE) {
+            showMessage("Choose a storage location first.")
             selectedEntry = null
             return
         }
@@ -1159,6 +1189,9 @@ fun FilesScreen(
                         selectionMode = multiSelectMode,
                         selectedCount = selectedEntries.size,
                         selectionHasItems = selectedEntries.isNotEmpty(),
+                        canCopySelected = selectedCapabilities.canCopy,
+                        canCutSelected = selectedCapabilities.canCut,
+                        canDeleteSelected = selectedCapabilities.canDelete,
                         selectedItemsAreArchives = selectedItemsAreArchives,
                         visibleItemCount = visibleEntries.size,
                         canMutateFiles = canMutateFiles,
@@ -1383,10 +1416,10 @@ fun FilesScreen(
                                 compressName = defaultZipName(entry)
                                 compressEntries = listOf(entry)
                             }
-                            ContextActionRow("Copy", Icons.Filled.ContentCopy, enabled = canWriteExistingItems) {
+                            ContextActionRow("Copy", Icons.Filled.ContentCopy, enabled = selectedCapabilities.canRead) {
                                 stageClipboard(listOf(entry), false)
                             }
-                            ContextActionRow("Cut", Icons.Filled.ContentCut, enabled = canWriteExistingItems) {
+                            ContextActionRow("Cut", Icons.Filled.ContentCut, enabled = selectedCapabilities.canDelete) {
                                 stageClipboard(listOf(entry), true)
                             }
                             ContextActionRow("Delete", Icons.Filled.Delete, enabled = selectedCapabilities.canDelete) {
@@ -1490,10 +1523,10 @@ fun FilesScreen(
                                 selectedEntry = null
                                 informationEntry = entry
                             }
-                            ContextActionRow("Copy", Icons.Filled.ContentCopy, enabled = canWriteExistingItems) {
+                            ContextActionRow("Copy", Icons.Filled.ContentCopy, enabled = selectedCapabilities.canRead) {
                                 stageClipboard(listOf(entry), false)
                             }
-                            ContextActionRow("Cut", Icons.Filled.ContentCut, enabled = canWriteExistingItems) {
+                            ContextActionRow("Cut", Icons.Filled.ContentCut, enabled = selectedCapabilities.canDelete) {
                                 stageClipboard(listOf(entry), true)
                             }
                             ContextActionRow("Delete", Icons.Filled.Delete, enabled = selectedCapabilities.canDelete) {
@@ -2016,6 +2049,9 @@ private fun FileBrowserToolbar(
     selectionMode: Boolean,
     selectedCount: Int,
     selectionHasItems: Boolean,
+    canCopySelected: Boolean,
+    canCutSelected: Boolean,
+    canDeleteSelected: Boolean,
     selectedItemsAreArchives: Boolean,
     visibleItemCount: Int,
     canMutateFiles: Boolean,
@@ -2279,17 +2315,17 @@ private fun FileBrowserToolbar(
                             onClick = { overflowExpanded = false; onCompressSelected() })
                         DropdownMenuItem(text = { Text("Copy") },
                             leadingIcon = { Icon(Icons.Filled.ContentCopy, contentDescription = null) },
-                            enabled = selectionHasItems && canMutateFiles,
+                            enabled = selectionHasItems && canCopySelected,
                             onClick = { overflowExpanded = false; onCopySelected() })
                         DropdownMenuItem(text = { Text("Cut") },
                             leadingIcon = { Icon(Icons.Filled.ContentCut, contentDescription = null) },
-                            enabled = selectionHasItems && canMutateFiles,
+                            enabled = selectionHasItems && canCutSelected,
                             onClick = { overflowExpanded = false; onCutSelected() })
                         DropdownMenuItem(text = { Text("Paste") }, enabled = canPaste,
                             onClick = { overflowExpanded = false; onPaste() })
                         DropdownMenuItem(text = { Text("Delete") },
                             leadingIcon = { Icon(Icons.Filled.Delete, contentDescription = null) },
-                            enabled = selectionHasItems && canMutateFiles,
+                            enabled = selectionHasItems && canDeleteSelected,
                             onClick = { overflowExpanded = false; onDeleteSelected() })
                         DropdownMenuItem(text = { Text("Select all") }, enabled = visibleItemCount > 0,
                             onClick = { overflowExpanded = false; onSelectAll() })

@@ -53,6 +53,7 @@ data class FilesUiState(
 )
 
 data class StoragePathCapabilities(
+    val canRead: Boolean = false,
     val canCreateChildren: Boolean = false,
     val canRename: Boolean = false,
     val canDelete: Boolean = false
@@ -443,10 +444,13 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
                 val item = File(entry.absolutePath ?: entry.documentId).canonicalFile
                 val insideRoot = item.path.startsWith(root.path + File.separator)
                 val parentMatches = item.parentFile?.canonicalFile == parentDirectory
+                val canRead = item.exists() && item.canRead() &&
+                    (!item.isDirectory || item.listFiles() != null)
                 val allowed = parentDirectory.isDirectory && parentDirectory.canWrite() &&
                     item.exists() && insideRoot && parentMatches
                 StoragePathCapabilities(
-                    canCreateChildren = entry.isDirectory && item.canWrite(),
+                    canRead = canRead,
+                    canCreateChildren = entry.isDirectory && item.isDirectory && item.canWrite(),
                     canRename = allowed,
                     canDelete = allowed
                 )
@@ -461,6 +465,7 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
                 val exists = safGateway.getDocument(treeUri, entry.documentId) != null
                 val canMutate = hasWriteGrant && parentIsDirectory && exists
                 StoragePathCapabilities(
+                    canRead = exists,
                     canCreateChildren = entry.isDirectory && canMutate,
                     canRename = canMutate,
                     canDelete = canMutate
@@ -473,6 +478,7 @@ class FilesViewModel(application: Application) : AndroidViewModel(application) {
                 val path = entry.absolutePath ?: return@runCatching StoragePathCapabilities()
                 val capabilities = shizukuStorageAdapter.getOperationCapabilities(path)
                 StoragePathCapabilities(
+                    canRead = capabilities.getBoolean(ShizukuStorageAdapter.KEY_CAN_READ),
                     canCreateChildren = capabilities.getBoolean(ShizukuStorageAdapter.KEY_CAN_CREATE_CHILDREN),
                     canRename = capabilities.getBoolean(ShizukuStorageAdapter.KEY_CAN_RENAME),
                     canDelete = capabilities.getBoolean(ShizukuStorageAdapter.KEY_CAN_DELETE)

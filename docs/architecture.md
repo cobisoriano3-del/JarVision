@@ -41,8 +41,8 @@ The app remains one Gradle application module (`:app`) with package-level featur
 - The normal app process may preview only small text files from Shizuku, with a 1 MiB cap. Explicit Open/Share can stage a read-only copy in app cache, capped at 512 MiB; source files remain unchanged.
 - ZIP tests and extraction enforce path safety, duplicate-entry rejection, a 10,000-entry limit, a 256 MiB per-entry expanded limit, and 1 GiB total expansion limit.
 - Copy/cut/paste stays within the same active backend and selected SAF tree when SAF is used. Shizuku copy is limited to its shared-storage scope. Cut copies first and removes the source only after the destination copy succeeds.
-- Replace and delete are confirmed by the UI. No operation silently overwrites an existing destination; copy conflicts offer Keep both or Replace.
-- Never overwrite silently; offer skip, rename, or replace where applicable when write features are later added.
+- Delete and any replacement supported by the active backend require explicit user confirmation. No operation silently overwrites an existing destination; shared-storage and SAF copy conflicts can offer Keep both or Replace, while Shizuku copy refuses replace-in-place.
+- Never overwrite silently. Every backend checks destination conflicts and lets the actual create/write operation reject a race or provider denial.
 - Prefer recoverable deletion where possible and distinguish permanent deletion explicitly.
 - Project files live in a private app-managed workspace by default. Database rows should store metadata, recents, favorites, preferences, and operation history—not entire source files.
 - Device storage access is limited to app-owned files and user-granted/system-permitted locations.
