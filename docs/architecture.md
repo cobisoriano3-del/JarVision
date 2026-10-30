@@ -15,7 +15,7 @@ The Shizuku process identity is not guaranteed to be root. Shell/ADB can read so
 
 ## Initial boundary
 
-The app remains one Gradle application module (`:app`) with package-level feature boundaries. Implemented files live in `data/storage/`, `feature/files/`, and `feature/access/`. Other early-stage feature placeholders remain grouped in `feature/screens/FeatureScreens.kt`.
+The app remains one Gradle application module (`:app`) with package-level feature boundaries. Implemented files live in `data/storage/`, `data/projects/`, `feature/files/`, `feature/projects/`, and `feature/access/`. Other early-stage feature placeholders remain grouped in `feature/screens/FeatureScreens.kt`.
 
 ## Main layers
 
@@ -63,7 +63,7 @@ The app remains one Gradle application module (`:app`) with package-level featur
 2. Storage abstraction and real file browser — initial implementation.
 3. Optional Shizuku storage connection with path-specific capability checks and permission-limited mutations — implemented; device permissions determine exact reach.
 4. Contextual file operations, in-app ZIP browsing, ZIP extraction, and ZIP/7z compression — implemented for supported storage backends; add operation progress and recoverable trash next.
-5. Persistent universal projects and explicit import/export.
+5. Persistent project workspace with nested folder/text-file operations — initial implementation complete; explicit import/export remains pending.
 6. Editor integration and recovery.
 7. ZIP validation and extraction — first implementation with path/size limits; expand archive formats through tests.
 8. Optional Dual Space, inspection tools, and device testing.

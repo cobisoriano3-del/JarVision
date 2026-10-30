@@ -61,7 +61,8 @@ fun ProjectsScreen(
     projects: List<com.jarvision.app.data.projects.Project> = emptyList(),
     isCreating: Boolean = false,
     errorMessage: String? = null,
-    onCreateProject: (String) -> Unit = {}
+    onCreateProject: (String) -> Unit = {},
+    onOpenProject: (com.jarvision.app.data.projects.Project) -> Unit = {}
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
     var projectName by remember { mutableStateOf("") }
@@ -103,10 +104,10 @@ fun ProjectsScreen(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         contentPadding = PaddingValues(vertical = 12.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) { items(visibleProjects, key = { it.id }) { ProjectCard(it) } }
+                    ) { items(visibleProjects, key = { it.id }) { project -> ProjectCard(project) { onOpenProject(project) } } }
                 } else {
                     LazyColumn(Modifier.weight(1f).fillMaxWidth(), contentPadding = PaddingValues(vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(visibleProjects, key = { it.id }) { ProjectCard(it) }
+                        items(visibleProjects, key = { it.id }) { project -> ProjectCard(project) { onOpenProject(project) } }
                     }
                 }
             } else {
@@ -151,8 +152,8 @@ fun ProjectsScreen(
 }
 
 @Composable
-private fun ProjectCard(project: com.jarvision.app.data.projects.Project) {
-    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(18.dp), color = Color(0xFF091D33), border = BorderStroke(1.dp, Color(0xFF284967).copy(alpha = 0.8f))) {
+private fun ProjectCard(project: com.jarvision.app.data.projects.Project, onClick: () -> Unit) {
+    Surface(Modifier.fillMaxWidth().clickable(onClick = onClick), shape = RoundedCornerShape(18.dp), color = Color(0xFF091D33), border = BorderStroke(1.dp, Color(0xFF284967).copy(alpha = 0.8f))) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Surface(Modifier.size(54.dp), shape = RoundedCornerShape(14.dp), color = Color(0xFF0A2745), border = BorderStroke(1.dp, Color(0xFF20476B))) {
                 Box(contentAlignment = Alignment.Center) { Icon(Icons.Outlined.FolderOpen, null, Modifier.size(28.dp), tint = Color(0xFF369AFF)) }
