@@ -37,6 +37,10 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import java.util.Locale
 
+/** True only for regular APK files; APK-like names on folders and other packages never qualify. */
+internal fun isApkInstallCandidate(entry: com.jarvision.app.data.storage.StorageEntry): Boolean =
+    !entry.isDirectory && entry.displayName.substringAfterLast('.', "").equals("apk", ignoreCase = true)
+
 @Composable
 internal fun FileEntryVisualIcon(
     entry: com.jarvision.app.data.storage.StorageEntry,

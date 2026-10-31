@@ -53,11 +53,23 @@ data class WorkspaceTransferClipboard(
     val isCut: Boolean
 )
 
+data class PublishFolderPickerState(
+    val projectId: String,
+    val pathStack: List<String>,
+    val folders: List<StorageEntry> = emptyList(),
+    val isLoading: Boolean = false,
+    val canWriteCurrentFolder: Boolean = false,
+    val errorMessage: String? = null
+) {
+    val currentPath: String get() = pathStack.lastOrNull().orEmpty()
+}
+
 data class WorkspaceTransferUiState(
     val clipboard: WorkspaceTransferClipboard? = null,
     val isWorking: Boolean = false,
     val message: String? = null,
-    val operationVersion: Int = 0
+    val operationVersion: Int = 0,
+    val publishFolderPicker: PublishFolderPickerState? = null
 )
 
 class WorkspaceTransferViewModel(app: Application) : AndroidViewModel(app) {
@@ -138,6 +150,155 @@ class WorkspaceTransferViewModel(app: Application) : AndroidViewModel(app) {
         parentAbsolutePath: String?
     ) {
         runPaste(Destination.StorageFolder(mode, treeUriString, parentDocumentId, parentAbsolutePath))
+    }
+
+    fun openPublishFolderPicker(projectId: String) {
+        if (_state.value.isWorking) return
+        val root = runCatching { fileOperations.internalStorageRootPath() }.getOrElse { error ->
+            _state.update { it.copy(message = error.message ?: "Internal storage is unavailable.") }
+            return
+        }
+        val stack = listOf(root)
+        _state.update {
+            it.copy(
+                publishFolderPicker = PublishFolderPickerState(
+                    projectId = projectId,
+                    pathStack = stack,
+                    isLoading = true
+                ),
+                message = null
+            )
+        }
+        loadPublishFolderChildren(projectId, stack)
+    }
+
+    fun navigatePublishFolderInto(folder: StorageEntry) {
+        val picker = _state.value.publishFolderPicker ?: return
+        if (!folder.isDirectory) return
+        val folderPath = folder.absolutePath ?: folder.documentId
+        if (folderPath in picker.pathStack) return
+        val nextStack = picker.pathStack + folderPath
+        _state.update {
+            it.copy(publishFolderPicker = picker.copy(pathStack = nextStack, folders = emptyList(), isLoading = true, errorMessage = null))
+        }
+        loadPublishFolderChildren(picker.projectId, nextStack)
+    }
+
+    fun navigatePublishFolderUp() {
+        val picker = _state.value.publishFolderPicker ?: return
+        if (picker.pathStack.size <= 1) return
+        val nextStack = picker.pathStack.dropLast(1)
+        _state.update {
+            it.copy(publishFolderPicker = picker.copy(pathStack = nextStack, folders = emptyList(), isLoading = true, errorMessage = null))
+        }
+        loadPublishFolderChildren(picker.projectId, nextStack)
+    }
+
+    fun closePublishFolderPicker() {
+        _state.update { it.copy(publishFolderPicker = null) }
+    }
+
+    private fun loadPublishFolderChildren(projectId: String, pathStack: List<String>) {
+        viewModelScope.launch {
+            try {
+                val path = pathStack.last()
+                val folders = withContext(Dispatchers.IO) {
+                    fileOperations.listInternalStorageFolders(path)
+                }
+                val canWrite = withContext(Dispatchers.IO) {
+                    fileOperations.canWriteInternalStorageFolder(path)
+                }
+                _state.update { current ->
+                    val picker = current.publishFolderPicker
+                    if (picker?.projectId != projectId || picker.pathStack != pathStack) current
+                    else current.copy(
+                        publishFolderPicker = picker.copy(
+                            folders = folders,
+                            isLoading = false,
+                            canWriteCurrentFolder = canWrite,
+                            errorMessage = null
+                        )
+                    )
+                }
+            } catch (error: Exception) {
+                _state.update { current ->
+                    val picker = current.publishFolderPicker
+                    if (picker?.projectId != projectId || picker.pathStack != pathStack) current
+                    else current.copy(
+                        publishFolderPicker = picker.copy(
+                            folders = emptyList(),
+                            isLoading = false,
+                            canWriteCurrentFolder = false,
+                            errorMessage = error.message ?: "Couldn't list this internal-storage folder."
+                        )
+                    )
+                }
+            }
+        }
+    }
+
+    fun publishProjectToInternalStorage(projectId: String, destinationPath: String) {
+        if (_state.value.isWorking) return
+        val picker = _state.value.publishFolderPicker
+        if (picker?.projectId != projectId || picker.currentPath != destinationPath) {
+            _state.update { it.copy(message = "The selected Publish destination changed. Choose the folder again.") }
+            return
+        }
+        _state.update { it.copy(isWorking = true, message = null) }
+        viewModelScope.launch {
+            try {
+                val project = repository.findProject(projectId)
+                    ?: throw IOException("This project no longer exists.")
+                val message = withContext(Dispatchers.IO) {
+                    if (!fileOperations.canWriteInternalStorageFolder(destinationPath)) {
+                        throw IOException("JarVision cannot write to this destination with the current storage permissions.")
+                    }
+                    val staging = File(
+                        getApplication<Application>().cacheDir,
+                        "jarvision-publish-${UUID.randomUUID()}"
+                    )
+                    repository.stageProject(projectId, staging)
+                    var cleanupWarning = false
+                    try {
+                        if (fileOperations.findNamedChild(
+                                StorageAccessMode.SHARED_STORAGE,
+                                null,
+                                destinationPath,
+                                destinationPath,
+                                project.name
+                            ) != null
+                        ) {
+                            throw IOException("A folder named ${project.name} already exists in the selected destination.")
+                        }
+                        fileOperations.publishStagedEntry(
+                            StorageAccessMode.SHARED_STORAGE,
+                            null,
+                            destinationPath,
+                            destinationPath,
+                            staging,
+                            project.name
+                        )
+                    } finally {
+                        if (staging.exists()) cleanupWarning = !staging.deleteRecursively()
+                    }
+                    buildString {
+                        append("Published ${project.name} as a copy. The private workspace was kept unchanged.")
+                        if (cleanupWarning) append(" Temporary cache cleanup needs attention.")
+                    }
+                }
+                _state.update {
+                    it.copy(
+                        publishFolderPicker = null,
+                        message = message,
+                        operationVersion = it.operationVersion + 1
+                    )
+                }
+            } catch (error: Exception) {
+                _state.update { it.copy(message = error.message ?: "Could not publish this project.") }
+            } finally {
+                _state.update { it.copy(isWorking = false) }
+            }
+        }
     }
 
     fun publishProjectToSaf(projectId: String, treeUriString: String) {

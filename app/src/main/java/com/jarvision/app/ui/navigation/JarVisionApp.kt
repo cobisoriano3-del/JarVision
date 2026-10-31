@@ -384,9 +384,14 @@ fun JarVisionApp() {
                     onCreateProject = projectsViewModel::createProject,
                     onOpenProject = { project -> navigateTo("workspace/${project.id}") },
                     onDeleteProject = { project -> projectsViewModel.deleteProject(project.id) },
-                    onPublishProject = { project, treeUri ->
-                        transferViewModel.publishProjectToSaf(project.id, treeUri)
+                    onBeginPublishProject = { project ->
+                        transferViewModel.openPublishFolderPicker(project.id)
                     },
+                    publishFolderPicker = transferState.publishFolderPicker,
+                    onNavigatePublishFolder = transferViewModel::navigatePublishFolderInto,
+                    onNavigatePublishParent = transferViewModel::navigatePublishFolderUp,
+                    onConfirmPublishFolder = transferViewModel::publishProjectToInternalStorage,
+                    onCancelPublishFolder = transferViewModel::closePublishFolderPicker,
                     transferMessage = transferState.message,
                     transferWorking = transferState.isWorking
                 )

@@ -33,6 +33,37 @@ class FileOperationCoordinator(
     private val shared = SharedStorageGateway()
     private val saf = SafStorageGateway(resolver)
 
+    /** Returns the primary shared-storage root used by the in-app project destination picker. */
+    fun internalStorageRootPath(): String = shared.rootDirectory().absoluteFile.toPath().normalize().toString()
+
+    /** Lists only folders beneath shared internal storage, using Shizuku when app access is unavailable. */
+    fun listInternalStorageFolders(directoryPath: String): List<StorageEntry> {
+        val rootPath = shared.rootDirectory().absoluteFile.toPath().normalize()
+        val requestedPath = File(directoryPath).absoluteFile.toPath().normalize()
+        if (!requestedPath.startsWith(rootPath)) {
+            throw IOException("The selected folder is outside shared internal storage.")
+        }
+        val parent = StorageEntry(
+            documentId = requestedPath.toString(),
+            displayName = requestedPath.fileName?.toString() ?: "Internal storage",
+            mimeType = DocumentsContract.Document.MIME_TYPE_DIR,
+            isDirectory = true,
+            sizeBytes = null,
+            lastModifiedMillis = null,
+            absolutePath = requestedPath.toString()
+        )
+        return storageChildrenForTransfer(
+            StorageAccessMode.SHARED_STORAGE,
+            null,
+            parent
+        ).filter { it.isDirectory }
+    }
+
+    /** Checks this destination with the app identity first, then the connected Shizuku identity. */
+    fun canWriteInternalStorageFolder(directoryPath: String): Boolean =
+        runCatching { checkedSharedDirectory(directoryPath).canWrite() }
+            .getOrElse { shizukuCanWriteDirectory(directoryPath) }
+
     fun openInputStream(
         mode: StorageAccessMode,
         treeUriString: String?,
@@ -688,20 +719,20 @@ class FileOperationCoordinator(
                 stagedArchive,
                 sources,
                 listChildren = { entry ->
-                    when (mode) {
-                        StorageAccessMode.SHARED_STORAGE -> shared.listChildren(
-                            checkedSharedDirectory(entry.absolutePath ?: entry.documentId).path
-                        )
-                        StorageAccessMode.DOCUMENT_TREE -> saf.listChildren(
-                            parseTreeUri(treeUriString), entry.documentId
-                        )
-                        StorageAccessMode.SHIZUKU_STORAGE -> shizuku.listChildren(
-                            entry.absolutePath ?: entry.documentId
-                        )
-                        StorageAccessMode.NONE -> throw IOException("Choose a storage location first.")
-                    }
+                    storageChildrenForTransfer(mode, treeUriString, entry)
                 },
-                openInput = { entry -> openInputStream(mode, treeUriString, entry) }
+                openInput = { entry ->
+                    if (mode == StorageAccessMode.SHARED_STORAGE) {
+                        runCatching { openInputStream(mode, treeUriString, entry) }.getOrElse { appError ->
+                            val sourcePath = entry.absolutePath ?: entry.documentId
+                            if (!shizuku.status.value.isConnected) throw appError
+                            runCatching { shizuku.openReadOnlyInputStream(sourcePath) }
+                                .getOrElse { throw appError }
+                        }
+                    } else {
+                        openInputStream(mode, treeUriString, entry)
+                    }
+                }
             )
             when (mode) {
                 StorageAccessMode.SHARED_STORAGE -> {

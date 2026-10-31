@@ -72,4 +72,23 @@ class EntryVisualClassificationTest {
         ),
         FilesUiState()
     )
+
+    @Test
+    fun apkInstallCandidateIsExclusiveToApkFiles() {
+        fun entry(name: String, directory: Boolean = false) = StorageEntry(
+            documentId = name,
+            displayName = name,
+            mimeType = null,
+            isDirectory = directory,
+            sizeBytes = null,
+            lastModifiedMillis = null
+        )
+
+        assertTrue(isApkInstallCandidate(entry("installer.apk")))
+        assertTrue(isApkInstallCandidate(entry("INSTALLER.APK")))
+        assertFalse(isApkInstallCandidate(entry("installer.apk", directory = true)))
+        assertFalse(isApkInstallCandidate(entry("installer.apks")))
+        assertFalse(isApkInstallCandidate(entry("installer.zip")))
+        assertFalse(isApkInstallCandidate(entry("installer.txt")))
+    }
 }

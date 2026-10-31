@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -24,12 +25,15 @@ import androidx.compose.material.icons.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Publish
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ViewWeek
 import androidx.compose.material.icons.filled.Workspaces
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
@@ -38,6 +42,8 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -52,11 +58,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.platform.LocalContext
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
-import android.content.Intent
-import android.net.Uri
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -64,6 +66,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.jarvision.app.ui.components.FeatureStatusScreen
+import com.jarvision.app.data.storage.StorageEntry
+import com.jarvision.app.feature.projects.PublishFolderPickerState
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -76,7 +80,12 @@ fun ProjectsScreen(
     onCreateProject: (String) -> Unit = {},
     onOpenProject: (com.jarvision.app.data.projects.Project) -> Unit = {},
     onDeleteProject: (com.jarvision.app.data.projects.Project) -> Unit = {},
-    onPublishProject: (com.jarvision.app.data.projects.Project, String) -> Unit = { _, _ -> },
+    onBeginPublishProject: (com.jarvision.app.data.projects.Project) -> Unit = {},
+    publishFolderPicker: PublishFolderPickerState? = null,
+    onNavigatePublishFolder: (StorageEntry) -> Unit = {},
+    onNavigatePublishParent: () -> Unit = {},
+    onConfirmPublishFolder: (String, String) -> Unit = { _, _ -> },
+    onCancelPublishFolder: () -> Unit = {},
     transferMessage: String? = null,
     transferWorking: Boolean = false
 ) {
@@ -84,26 +93,6 @@ fun ProjectsScreen(
     var projectName by remember { mutableStateOf("") }
     var selectedProject by remember { mutableStateOf<com.jarvision.app.data.projects.Project?>(null) }
     var deleteConfirmationProject by remember { mutableStateOf<com.jarvision.app.data.projects.Project?>(null) }
-    var pendingPublishProject by remember { mutableStateOf<com.jarvision.app.data.projects.Project?>(null) }
-    var publishError by remember { mutableStateOf<String?>(null) }
-    val context = LocalContext.current
-    val publishFolderPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocumentTree()
-    ) { uri: Uri? ->
-        val project = pendingPublishProject
-        pendingPublishProject = null
-        if (project == null || uri == null) return@rememberLauncherForActivityResult
-        try {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
-            onPublishProject(project, uri.toString())
-            publishError = null
-        } catch (error: Exception) {
-            publishError = error.message ?: "Could not grant access to the selected folder."
-        }
-    }
     val searching = searchQuery.isNotBlank()
     val visibleProjects = projects.filter { it.name.contains(searchQuery, ignoreCase = true) }
     val emblemSize = if (gridView) 116.dp else 138.dp
@@ -135,9 +124,9 @@ fun ProjectsScreen(
                 }
                 Spacer(Modifier.height(14.dp)); ProjectsDivider()
             } else Spacer(Modifier.height(8.dp))
-            if (transferWorking || transferMessage != null || publishError != null) {
+            if (transferWorking || transferMessage != null) {
                 Text(
-                    text = if (transferWorking) "Transfer in progress…" else publishError ?: transferMessage.orEmpty(),
+                    text = if (transferWorking) "Transfer in progress…" else transferMessage.orEmpty(),
                     color = if (publishError != null || transferMessage?.contains("failed", true) == true)
                         Color(0xFFFF9A9A) else Color(0xFFA7BEDB),
                     style = MaterialTheme.typography.bodySmall,
@@ -208,8 +197,7 @@ fun ProjectsScreen(
                 Surface(
                     modifier = Modifier.fillMaxWidth().clickable(enabled = !transferWorking) {
                         selectedProject = null
-                        pendingPublishProject = project
-                        publishFolderPicker.launch(null)
+                        onBeginPublishProject(project)
                     },
                     color = Color(0xFF0A2B4B),
                     shape = RoundedCornerShape(16.dp),
@@ -249,6 +237,130 @@ fun ProjectsScreen(
                     }
                 }
                 Spacer(Modifier.height(14.dp))
+            }
+        }
+    }
+
+
+    publishFolderPicker?.let { picker ->
+        ModalBottomSheet(
+            onDismissRequest = onCancelPublishFolder,
+            containerColor = Color(0xFF071B30),
+            contentColor = Color(0xFFF4F7FF),
+            scrimColor = Color.Black.copy(alpha = 0.68f),
+            dragHandle = {
+                Surface(
+                    modifier = Modifier.padding(vertical = 10.dp).size(width = 38.dp, height = 4.dp),
+                    shape = RoundedCornerShape(4.dp),
+                    color = Color(0xFF4778A6)
+                ) {}
+            }
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 660.dp)
+                    .padding(horizontal = 18.dp, vertical = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = onNavigatePublishParent,
+                        enabled = picker.pathStack.size > 1 && !picker.isLoading && !transferWorking
+                    ) {
+                        Icon(Icons.Filled.ArrowBack, contentDescription = "Parent folder", tint = Color(0xFF65B7FF))
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "Publish project",
+                            color = Color(0xFFF4F7FF),
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            picker.currentPath,
+                            color = Color(0xFFA7BEDB),
+                            style = MaterialTheme.typography.bodySmall,
+                            maxLines = 2
+                        )
+                    }
+                }
+                Text(
+                    "Choose an internal-storage folder. JarVision will export a copy and keep the original project.",
+                    color = Color(0xFFA7BEDB),
+                    style = MaterialTheme.typography.bodySmall
+                )
+                when {
+                    picker.isLoading -> Box(
+                        Modifier.fillMaxWidth().height(180.dp),
+                        contentAlignment = Alignment.Center
+                    ) { CircularProgressIndicator(color = Color(0xFF65B7FF)) }
+                    picker.errorMessage != null -> Box(
+                        Modifier.fillMaxWidth().heightIn(min = 100.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(picker.errorMessage, color = Color(0xFFFF9A9A), style = MaterialTheme.typography.bodySmall)
+                    }
+                    picker.folders.isEmpty() -> Box(
+                        Modifier.fillMaxWidth().heightIn(min = 100.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text("No subfolders in this location.", color = Color(0xFFA7BEDB))
+                    }
+                    else -> LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
+                        contentPadding = PaddingValues(vertical = 4.dp),
+                        verticalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        items(picker.folders, key = { it.absolutePath ?: it.documentId }) { folder ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(13.dp))
+                                    .clickable(enabled = !transferWorking) { onNavigatePublishFolder(folder) }
+                                    .background(Color(0xFF0A2745))
+                                    .padding(horizontal = 13.dp, vertical = 13.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Filled.FolderOpen, null, tint = Color(0xFF65B7FF))
+                                Spacer(Modifier.width(12.dp))
+                                Text(
+                                    folder.displayName,
+                                    color = Color(0xFFF4F7FF),
+                                    modifier = Modifier.weight(1f),
+                                    maxLines = 1
+                                )
+                                Icon(Icons.Filled.ChevronRight, null, tint = Color(0xFFA7BEDB))
+                            }
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 18.dp),
+                    horizontalArrangement = Arrangement.End,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(
+                        enabled = !transferWorking,
+                        onClick = onCancelPublishFolder
+                    ) { Text("Cancel", color = Color(0xFFA7BEDB)) }
+                    Spacer(Modifier.width(8.dp))
+                    Button(
+                        enabled = picker.canWriteCurrentFolder && !picker.isLoading &&
+                            picker.errorMessage == null && !transferWorking,
+                        onClick = { onConfirmPublishFolder(picker.projectId, picker.currentPath) }
+                    ) {
+                        if (transferWorking) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = Color.White
+                            )
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text("Publish here")
+                    }
+                }
             }
         }
     }

@@ -412,6 +412,8 @@ fun FilesScreen(
     var compressEntries by remember { mutableStateOf<List<StorageEntry>?>(null) }
     var compressName by remember { mutableStateOf("") }
     var compressAsSevenZip by remember { mutableStateOf(false) }
+    var compressionWorking by remember { mutableStateOf(false) }
+    var pendingApkInstallEntry by remember { mutableStateOf<StorageEntry?>(null) }
     var deleteEntry by remember { mutableStateOf<StorageEntry?>(null) }
     var clipboard by remember { mutableStateOf<PendingFileClipboard?>(null) }
     var pasteConflict by remember { mutableStateOf<PasteConflict?>(null) }
@@ -662,6 +664,74 @@ fun FilesScreen(
 
     fun showMessage(message: String) {
         coroutineScope.launch { snackbarHostState.showSnackbar(message) }
+    }
+
+    fun launchApkInstaller(entry: StorageEntry) {
+        if (!isApkInstallCandidate(entry)) return
+        coroutineScope.launch {
+            try {
+                val stagedApk = withContext(Dispatchers.IO) {
+                    fileOperations.stageShareCopy(state.accessMode, state.treeUriString, entry)
+                }
+                val apkUri = FileProvider.getUriForFile(
+                    context,
+                    context.packageName + ".fileprovider",
+                    stagedApk
+                )
+                val installIntent = Intent(Intent.ACTION_VIEW)
+                    .setDataAndType(apkUri, "application/vnd.android.package-archive")
+                    .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                installIntent.clipData = ClipData.newUri(
+                    context.contentResolver,
+                    entry.displayName,
+                    apkUri
+                )
+                context.startActivity(installIntent)
+            } catch (error: ActivityNotFoundException) {
+                showMessage("Android could not find a package installer for this APK.")
+            } catch (error: SecurityException) {
+                showMessage(error.message ?: "Android denied access to the staged APK.")
+            } catch (error: Exception) {
+                showMessage(error.message ?: "Couldn't prepare this APK for installation.")
+            }
+        }
+    }
+
+    val installUnknownSourcesLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        val pending = pendingApkInstallEntry
+        pendingApkInstallEntry = null
+        if (pending != null) {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+                context.packageManager.canRequestPackageInstalls()
+            ) {
+                launchApkInstaller(pending)
+            } else {
+                showMessage("Allow JarVision to install unknown apps before installing this APK.")
+            }
+        }
+    }
+
+    fun requestApkInstall(entry: StorageEntry) {
+        if (!isApkInstallCandidate(entry)) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            !context.packageManager.canRequestPackageInstalls()
+        ) {
+            pendingApkInstallEntry = entry
+            val permissionIntent = Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:${context.packageName}")
+            )
+            try {
+                installUnknownSourcesLauncher.launch(permissionIntent)
+            } catch (error: Exception) {
+                pendingApkInstallEntry = null
+                showMessage(error.message ?: "Couldn't open Android's install permission settings.")
+            }
+            return
+        }
+        launchApkInstaller(entry)
     }
 
     fun openArchiveInJarVision(entry: StorageEntry) {
@@ -1002,8 +1072,10 @@ fun FilesScreen(
 
     fun compressSelected(entries: List<StorageEntry>, requestedName: String) {
         val destination = state.currentPath.lastOrNull() ?: return
-        if (entries.isEmpty()) return
+        if (entries.isEmpty() || compressionWorking) return
         val useSevenZip = compressAsSevenZip
+        compressionWorking = true
+        showMessage(if (useSevenZip) "Creating 7z archive…" else "Creating ZIP archive…")
         coroutineScope.launch {
             try {
                 val outputName = withContext(Dispatchers.IO) {
@@ -1025,6 +1097,8 @@ fun FilesScreen(
                 showMessage("Created " + outputName + " from ${entries.size} item(s).")
             } catch (error: Exception) {
                 showMessage(error.message ?: "Couldn't compress the selected items.")
+            } finally {
+                compressionWorking = false
             }
         }
     }
@@ -1321,8 +1395,14 @@ fun FilesScreen(
                             }
                         },
                         onToggleMultiSelect = {
-                            multiSelectMode = !multiSelectMode
-                            if (!multiSelectMode) filesViewModel.clearSelection()
+                            val enteringSelection = !multiSelectMode
+                            multiSelectMode = enteringSelection
+                            if (enteringSelection) {
+                                searchExpanded = false
+                                searchQuery = ""
+                            } else {
+                                filesViewModel.clearSelection()
+                            }
                             fabExpanded = false
                         },
                         onDeleteSelected = { bulkDeleteConfirmation = true },
@@ -1386,6 +1466,11 @@ fun FilesScreen(
                                 entrySheetMode = EntrySheetMode.LONG_PRESS
                                 selectedEntry = entry
                             }
+                        },
+                        onQuickSelectEntry = { entry ->
+                            if (!multiSelectMode) multiSelectMode = true
+                            toggleSelectedEntry(entry)
+                            fabExpanded = false
                         },
                         onRetry = filesViewModel::refresh,
                         searchActive = searchQuery.isNotBlank() || (!showHiddenFiles && state.entries.any { it.displayName.startsWith(".") })
@@ -1463,6 +1548,16 @@ fun FilesScreen(
         )
 
         selectedEntry?.let { entry ->
+            if (isApkInstallCandidate(entry)) {
+                ContextActionRow(
+                    "Install",
+                    Icons.Filled.Android,
+                    supportingText = "Open Android's package installer."
+                ) {
+                    selectedEntry = null
+                    requestApkInstall(entry)
+                }
+            }
             val canWriteExistingItems = canMutateFiles
             val parentLocation = state.currentPath.lastOrNull()
             val selectedCapabilities by produceState(
@@ -1824,8 +1919,10 @@ fun FilesScreen(
         compressEntries?.let { entries ->
             AlertDialog(
                 onDismissRequest = {
-                    compressEntries = null
-                    compressAsSevenZip = false
+                    if (!compressionWorking) {
+                        compressEntries = null
+                        compressAsSevenZip = false
+                    }
                 },
                 title = { Text(if (compressAsSevenZip) "Compress to 7z" else "Compress to ZIP") },
                 text = {
@@ -1841,6 +1938,7 @@ fun FilesScreen(
                             value = compressName,
                             onValueChange = { compressName = it },
                             label = { Text(if (compressAsSevenZip) "7z archive name" else "ZIP archive name") },
+                            enabled = !compressionWorking,
                             singleLine = true
                         )
                     }
@@ -1848,14 +1946,23 @@ fun FilesScreen(
                 confirmButton = {
                     TextButton(
                         onClick = { compressSelected(entries, compressName) },
-                        enabled = compressName.isNotBlank()
-                    ) { Text("Compress") }
+                        enabled = compressName.isNotBlank() && !compressionWorking
+                    ) {
+                        if (compressionWorking) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        Text(if (compressionWorking) "Compressing…" else "Compress")
+                    }
                 },
                 dismissButton = {
-                    TextButton(onClick = {
-                        compressEntries = null
-                        compressAsSevenZip = false
-                    }) { Text("Cancel") }
+                    TextButton(
+                        enabled = !compressionWorking,
+                        onClick = {
+                            compressEntries = null
+                            compressAsSevenZip = false
+                        }
+                    ) { Text("Cancel") }
                 }
             )
         }
@@ -2239,6 +2346,8 @@ private fun FileBrowserToolbar(
     var viewMenuExpanded by remember { mutableStateOf(false) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
     var overflowExpanded by remember { mutableStateOf(false) }
+    var selectionOperationsExpanded by remember { mutableStateOf(false) }
+    var selectionOptionsExpanded by remember { mutableStateOf(false) }
 
     BoxWithConstraints(
         modifier = Modifier
@@ -2260,6 +2369,122 @@ private fun FileBrowserToolbar(
                 .heightIn(min = 58.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            if (selectionMode) {
+                IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
+                    Icon(Icons.Filled.Close, contentDescription = "Exit multi-select", tint = Color.White)
+                }
+                Column(modifier = Modifier.weight(1f).widthIn(min = 0.dp)) {
+                    Text(
+                        "${selectedCount} selected",
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1
+                    )
+                    Text(
+                        "Tap items to select or deselect",
+                        color = Color.White.copy(alpha = 0.76f),
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1
+                    )
+                }
+                Box {
+                    IconButton(
+                        enabled = selectionHasItems,
+                        onClick = { selectionOperationsExpanded = true }
+                    ) {
+                        Icon(Icons.Filled.GridView, contentDescription = "File operations", tint = Color.White)
+                    }
+                    DropdownMenu(
+                        expanded = selectionOperationsExpanded,
+                        onDismissRequest = { selectionOperationsExpanded = false },
+                        shape = RoundedCornerShape(18.dp),
+                        containerColor = Color(0xFF071B32),
+                        tonalElevation = 0.dp,
+                        border = BorderStroke(1.dp, Color(0xFF1D5A96).copy(alpha = 0.9f))
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Copy") },
+                            leadingIcon = { Icon(Icons.Filled.ContentCopy, null) },
+                            enabled = selectionHasItems && canCopySelected,
+                            onClick = { selectionOperationsExpanded = false; onCopySelected() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Cut") },
+                            leadingIcon = { Icon(Icons.Filled.ContentCut, null) },
+                            enabled = selectionHasItems && canCutSelected,
+                            onClick = { selectionOperationsExpanded = false; onCutSelected() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Delete") },
+                            leadingIcon = { Icon(Icons.Filled.Delete, null) },
+                            enabled = selectionHasItems && canDeleteSelected,
+                            onClick = { selectionOperationsExpanded = false; onDeleteSelected() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Compress to ZIP…") },
+                            leadingIcon = { Icon(Icons.Filled.Archive, null) },
+                            enabled = selectionHasItems && canCopySelected && canMutateFiles,
+                            onClick = { selectionOperationsExpanded = false; onCompressSelected() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Compress to 7z…") },
+                            leadingIcon = { Icon(Icons.Filled.Archive, null) },
+                            enabled = selectionHasItems && canCopySelected && canMutateFiles,
+                            onClick = { selectionOperationsExpanded = false; onCompressSelectedSevenZip() }
+                        )
+                        if (selectedItemsAreArchives) {
+                            DropdownMenuItem(
+                                text = { Text("Extract selected") },
+                                leadingIcon = { Icon(Icons.Filled.FolderOpen, null) },
+                                enabled = canMutateFiles,
+                                onClick = { selectionOperationsExpanded = false; onExtractSelected() }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("Test selected") },
+                                leadingIcon = { Icon(Icons.Filled.Info, null) },
+                                enabled = true,
+                                onClick = { selectionOperationsExpanded = false; onTestSelected() }
+                            )
+                        }
+                        DropdownMenuItem(
+                            text = { Text("Paste") },
+                            leadingIcon = { Icon(Icons.Filled.ContentPaste, null) },
+                            enabled = canPaste,
+                            onClick = { selectionOperationsExpanded = false; onPaste() }
+                        )
+                    }
+                }
+                Box {
+                    IconButton(onClick = { selectionOptionsExpanded = true }) {
+                        Icon(Icons.Filled.Check, contentDescription = "Selection options", tint = Color.White)
+                    }
+                    DropdownMenu(
+                        expanded = selectionOptionsExpanded,
+                        onDismissRequest = { selectionOptionsExpanded = false },
+                        shape = RoundedCornerShape(18.dp),
+                        containerColor = Color(0xFF071B32),
+                        tonalElevation = 0.dp,
+                        border = BorderStroke(1.dp, Color(0xFF1D5A96).copy(alpha = 0.9f))
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Select all") },
+                            enabled = visibleItemCount > 0,
+                            onClick = { selectionOptionsExpanded = false; onSelectAll() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Invert selection") },
+                            enabled = visibleItemCount > 0,
+                            onClick = { selectionOptionsExpanded = false; onInvertSelection() }
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Deselect all") },
+                            enabled = selectedCount > 0,
+                            onClick = { selectionOptionsExpanded = false; onDeselectAll() }
+                        )
+                    }
+                }
+            } else {
             IconButton(onClick = onBack, enabled = selectionMode || canNavigateBack) {
                 Icon(
                     imageVector = if (selectionMode) Icons.Filled.Close else Icons.Filled.ArrowBack,
@@ -2646,7 +2871,8 @@ private fun FileBrowserToolbar(
                     }
                 }
             }
-        }
+        
+            }}
 
         if (pathMenuTransition.currentState || pathMenuTransition.targetState) {
             Popup(
@@ -2736,6 +2962,7 @@ private fun BrowserState(
     selectionMode: Boolean,
     onOpenEntry: (StorageEntry) -> Unit,
     onLongPressEntry: (StorageEntry) -> Unit,
+    onQuickSelectEntry: (StorageEntry) -> Unit,
     onRetry: () -> Unit,
     searchActive: Boolean
 ) {
@@ -2835,7 +3062,8 @@ private fun BrowserState(
                             selected = entry.documentId in selectedEntryIds,
                             selectionMode = selectionMode,
                             onClick = { onOpenEntry(entry) },
-                            onLongClick = { onLongPressEntry(entry) }
+                            onLongClick = { onLongPressEntry(entry) },
+                            onQuickSelect = { onQuickSelectEntry(entry) }
                         )
                     }
                 }
@@ -2899,7 +3127,8 @@ private fun BrowserState(
                                 selected = entry.documentId in selectedEntryIds,
                                 selectionMode = selectionMode,
                                 onClick = { onOpenEntry(entry) },
-                                onLongClick = { onLongPressEntry(entry) }
+                                onLongClick = { onLongPressEntry(entry) },
+                                onQuickSelect = { onQuickSelectEntry(entry) }
                             )
                         }
                     }
@@ -2990,7 +3219,8 @@ private fun FileEntryRow(
     selected: Boolean,
     selectionMode: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit
+    onLongClick: () -> Unit,
+    onQuickSelect: () -> Unit
 ) {
     val compact = viewMode == BrowserViewMode.COMPACT
     val thumbnailSize = if (compact) 32.dp else 38.dp
@@ -3014,13 +3244,18 @@ private fun FileEntryRow(
             ),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            FileEntryVisualIcon(
-                entry = entry,
-                state = state,
-                filesViewModel = filesViewModel,
-                customFolderIconUris = customFolderIconUris,
-                thumbnailSize = thumbnailSize
-            )
+            Box(
+                modifier = Modifier.size(thumbnailSize).clickable(onClick = onQuickSelect),
+                contentAlignment = Alignment.Center
+            ) {
+                FileEntryVisualIcon(
+                    entry = entry,
+                    state = state,
+                    filesViewModel = filesViewModel,
+                    customFolderIconUris = customFolderIconUris,
+                    thumbnailSize = thumbnailSize
+                )
+            }
             Spacer(Modifier.size(if (compact) 10.dp else 12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
@@ -3076,7 +3311,8 @@ private fun GridFileEntry(
     selected: Boolean,
     selectionMode: Boolean,
     onClick: () -> Unit,
-    onLongClick: () -> Unit
+    onLongClick: () -> Unit,
+    onQuickSelect: () -> Unit
 ) {
     Card(
         modifier = Modifier
@@ -3092,13 +3328,18 @@ private fun GridFileEntry(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 8.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            FileEntryVisualIcon(
-                entry = entry,
-                state = state,
-                filesViewModel = filesViewModel,
-                customFolderIconUris = customFolderIconUris,
-                thumbnailSize = 48.dp
-            )
+            Box(
+                modifier = Modifier.size(48.dp).clickable(onClick = onQuickSelect),
+                contentAlignment = Alignment.Center
+            ) {
+                FileEntryVisualIcon(
+                    entry = entry,
+                    state = state,
+                    filesViewModel = filesViewModel,
+                    customFolderIconUris = customFolderIconUris,
+                    thumbnailSize = 48.dp
+                )
+            }
             Spacer(Modifier.height(4.dp))
             Text(
                 text = entry.displayName,

@@ -43,6 +43,8 @@ import androidx.compose.material.icons.filled.ContentCut
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.GridView
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Description
@@ -122,6 +124,9 @@ fun WorkspaceScreen(
     val transferState by transferViewModel.state.collectAsState()
     val scope = rememberCoroutineScope()
     var showDeleteSelectionConfirmation by remember { mutableStateOf(false) }
+    var overflowExpanded by remember { mutableStateOf(false) }
+    var selectionOperationsExpanded by remember { mutableStateOf(false) }
+    var selectionOptionsExpanded by remember { mutableStateOf(false) }
 
     var multiSelect by remember(project.id) { mutableStateOf(false) }
     var selectedPaths by remember(project.id) { mutableStateOf(emptySet<String>()) }
@@ -239,22 +244,24 @@ fun WorkspaceScreen(
                     ) {
                         IconButton(
                             onClick = {
-                                when {
-                                    multiSelect -> {
-                                        multiSelect = false
-                                        selectedPaths = emptySet()
-                                    }
-                                    state.relativeDirectory.isNotEmpty() -> viewModel.navigateUp()
-                                    else -> onBack()
+                                if (multiSelect) {
+                                    multiSelect = false
+                                    selectedPaths = emptySet()
+                                    selectionOperationsExpanded = false
+                                    selectionOptionsExpanded = false
+                                } else if (state.relativeDirectory.isNotEmpty()) {
+                                    viewModel.navigateUp()
+                                } else {
+                                    onBack()
                                 }
                             },
                             modifier = Modifier.size(48.dp)
                         ) {
                             Icon(
-                                Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "Back",
+                                if (multiSelect) Icons.Filled.Close else Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = if (multiSelect) "Close multi-select" else "Back",
                                 tint = WorkspacePalette.AccentLight,
-                                modifier = Modifier.size(30.dp)
+                                modifier = Modifier.size(27.dp)
                             )
                         }
 
@@ -262,7 +269,7 @@ fun WorkspaceScreen(
 
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = project.name,
+                                text = if (multiSelect) "${selectedPaths.size} selected" else project.name,
                                 color = WorkspacePalette.Text,
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold,
@@ -270,40 +277,119 @@ fun WorkspaceScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "Workspace",
+                                text = if (multiSelect) "Select files and folders" else "Workspace",
                                 color = WorkspacePalette.Muted,
                                 style = MaterialTheme.typography.bodyLarge,
                                 maxLines = 1
                             )
                         }
 
-                        Surface(
-                            onClick = {
-                                multiSelect = !multiSelect
-                                selectedPaths = emptySet()
-                            },
-                            shape = RoundedCornerShape(14.dp),
-                            color = if (multiSelect) Color(0xFF0C3D70) else Color.Transparent
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 8.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
-                            ) {
-                                Icon(
-                                    Icons.Outlined.TouchApp,
-                                    contentDescription = null,
-                                    tint = WorkspacePalette.AccentLight,
-                                    modifier = Modifier
-                                        .size(34.dp)
-                                        .rotate(-35f)
-                                )
-                                Text(
-                                    text = "Multi select",
-                                    color = WorkspacePalette.AccentLight,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    maxLines = 1
-                                )
+                        if (multiSelect) {
+                            Box {
+                                IconButton(
+                                    enabled = selectedPaths.isNotEmpty() && !state.isWorking && !transferState.isWorking,
+                                    onClick = { selectionOperationsExpanded = true }
+                                ) {
+                                    Icon(Icons.Filled.GridView, contentDescription = "File operations", tint = WorkspacePalette.AccentLight)
+                                }
+                                DropdownMenu(
+                                    expanded = selectionOperationsExpanded,
+                                    onDismissRequest = { selectionOperationsExpanded = false },
+                                    shape = RoundedCornerShape(16.dp),
+                                    containerColor = WorkspacePalette.Card
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Copy", color = WorkspacePalette.Text) },
+                                        leadingIcon = { Icon(Icons.Filled.ContentCopy, null, tint = WorkspacePalette.AccentLight) },
+                                        enabled = selectedPaths.isNotEmpty() && !state.isWorking && !transferState.isWorking,
+                                        onClick = {
+                                            selectionOperationsExpanded = false
+                                            val selected = state.entries.filter { it.relativePath in selectedPaths }
+                                            transferViewModel.stageWorkspaceEntries(project.id, selected, cut = false)
+                                            multiSelect = false
+                                            selectedPaths = emptySet()
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Cut", color = WorkspacePalette.Text) },
+                                        leadingIcon = { Icon(Icons.Filled.ContentCut, null, tint = WorkspacePalette.AccentLight) },
+                                        enabled = selectedPaths.isNotEmpty() && !state.isWorking && !transferState.isWorking,
+                                        onClick = {
+                                            selectionOperationsExpanded = false
+                                            val selected = state.entries.filter { it.relativePath in selectedPaths }
+                                            transferViewModel.stageWorkspaceEntries(project.id, selected, cut = true)
+                                            multiSelect = false
+                                            selectedPaths = emptySet()
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Delete", color = WorkspacePalette.Error) },
+                                        leadingIcon = { Icon(Icons.Filled.Delete, null, tint = WorkspacePalette.Error) },
+                                        enabled = selectedPaths.isNotEmpty() && !state.isWorking && !transferState.isWorking,
+                                        onClick = {
+                                            selectionOperationsExpanded = false
+                                            showDeleteSelectionConfirmation = true
+                                        }
+                                    )
+                                }
+                            }
+                            Box {
+                                IconButton(onClick = { selectionOptionsExpanded = true }) {
+                                    Icon(Icons.Filled.Check, contentDescription = "Selection options", tint = WorkspacePalette.AccentLight)
+                                }
+                                DropdownMenu(
+                                    expanded = selectionOptionsExpanded,
+                                    onDismissRequest = { selectionOptionsExpanded = false },
+                                    shape = RoundedCornerShape(16.dp),
+                                    containerColor = WorkspacePalette.Card
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Select all", color = WorkspacePalette.Text) },
+                                        enabled = state.entries.isNotEmpty(),
+                                        onClick = {
+                                            selectionOptionsExpanded = false
+                                            selectedPaths = state.entries.map { it.relativePath }.toSet()
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Invert selection", color = WorkspacePalette.Text) },
+                                        enabled = state.entries.isNotEmpty(),
+                                        onClick = {
+                                            selectionOptionsExpanded = false
+                                            selectedPaths = state.entries.map { it.relativePath }
+                                                .filterNot { it in selectedPaths }.toSet()
+                                        }
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Deselect all", color = WorkspacePalette.Text) },
+                                        enabled = selectedPaths.isNotEmpty(),
+                                        onClick = {
+                                            selectionOptionsExpanded = false
+                                            selectedPaths = emptySet()
+                                        }
+                                    )
+                                }
+                            }
+                        } else {
+                            Box {
+                                IconButton(onClick = { overflowExpanded = true }, modifier = Modifier.size(48.dp)) {
+                                    Icon(Icons.Filled.MoreVert, contentDescription = "Workspace options", tint = WorkspacePalette.AccentLight, modifier = Modifier.size(27.dp))
+                                }
+                                DropdownMenu(
+                                    expanded = overflowExpanded,
+                                    onDismissRequest = { overflowExpanded = false },
+                                    shape = RoundedCornerShape(16.dp),
+                                    containerColor = WorkspacePalette.Card
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Multi-select", color = WorkspacePalette.Text) },
+                                        onClick = {
+                                            overflowExpanded = false
+                                            multiSelect = true
+                                            selectedPaths = emptySet()
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
@@ -368,84 +454,6 @@ fun WorkspaceScreen(
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
                 )
-            }
-
-            if (multiSelect) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = "${selectedPaths.size} selected",
-                            color = WorkspacePalette.AccentLight,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f)
-                        )
-                        TextButton(
-                            onClick = { selectedPaths = state.entries.map { it.relativePath }.toSet() },
-                            enabled = state.entries.isNotEmpty()
-                        ) { Text("Select all", color = WorkspacePalette.AccentLight) }
-                        TextButton(
-                            onClick = { selectedPaths = emptySet() },
-                            enabled = selectedPaths.isNotEmpty()
-                        ) { Text("Clear", color = WorkspacePalette.Muted) }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        TextButton(
-                            enabled = selectedPaths.isNotEmpty() && !state.isWorking && !transferState.isWorking,
-                            onClick = {
-                                val selected = state.entries.filter { it.relativePath in selectedPaths }
-                                transferViewModel.stageWorkspaceEntries(project.id, selected, cut = false)
-                                multiSelect = false
-                                selectedPaths = emptySet()
-                            }
-                        ) {
-                            Icon(Icons.Filled.ContentCopy, null, tint = WorkspacePalette.AccentLight)
-                            Spacer(Modifier.width(5.dp))
-                            Text("Copy", color = WorkspacePalette.AccentLight)
-                        }
-                        TextButton(
-                            enabled = selectedPaths.isNotEmpty() && !state.isWorking && !transferState.isWorking,
-                            onClick = {
-                                val selected = state.entries.filter { it.relativePath in selectedPaths }
-                                transferViewModel.stageWorkspaceEntries(project.id, selected, cut = true)
-                                multiSelect = false
-                                selectedPaths = emptySet()
-                            }
-                        ) {
-                            Icon(Icons.Filled.ContentCut, null, tint = WorkspacePalette.AccentLight)
-                            Spacer(Modifier.width(5.dp))
-                            Text("Cut", color = WorkspacePalette.AccentLight)
-                        }
-                        TextButton(
-                            enabled = selectedPaths.isNotEmpty() && !state.isWorking && !transferState.isWorking,
-                            onClick = { showDeleteSelectionConfirmation = true }
-                        ) {
-                            Icon(Icons.Filled.Delete, null, tint = WorkspacePalette.Error)
-                            Spacer(Modifier.width(5.dp))
-                            Text("Delete", color = WorkspacePalette.Error)
-                        }
-                        TextButton(
-                            enabled = transferState.clipboard?.sources?.isNotEmpty() == true &&
-                                !transferState.isWorking && !state.isWorking,
-                            onClick = {
-                                transferViewModel.pasteToWorkspace(project.id, state.relativeDirectory)
-                                selectedPaths = emptySet()
-                            }
-                        ) {
-                            Icon(Icons.Filled.ContentPaste, null, tint = WorkspacePalette.AccentLight)
-                            Spacer(Modifier.width(5.dp))
-                            Text("Paste", color = WorkspacePalette.AccentLight)
-                        }
-                    }
-                }
             }
 
             if (!multiSelect && transferState.clipboard?.sources?.isNotEmpty() == true) {
@@ -557,6 +565,10 @@ fun WorkspaceScreen(
                                 selected = entry.relativePath in selectedPaths,
                                 multiSelect = multiSelect,
                                 onClick = { openEntry(entry) },
+                                onQuickSelect = {
+                                    if (!multiSelect) multiSelect = true
+                                    toggleSelected(entry.relativePath)
+                                },
                                 onOpen = { openEntry(entry) },
                                 onRename = { showNameDialog(WorkspaceNameDialogType.Rename, entry) }
                             )
@@ -791,6 +803,7 @@ private fun WorkspaceFileCard(
     selected: Boolean,
     multiSelect: Boolean,
     onClick: () -> Unit,
+    onQuickSelect: () -> Unit,
     onOpen: () -> Unit,
     onRename: () -> Unit
 ) {
@@ -818,7 +831,8 @@ private fun WorkspaceFileCard(
                     .size(58.dp)
                     .clip(RoundedCornerShape(17.dp))
                     .background(WorkspacePalette.IconTile)
-                    .border(1.dp, WorkspacePalette.CardBorder, RoundedCornerShape(17.dp)),
+                    .border(1.dp, WorkspacePalette.CardBorder, RoundedCornerShape(17.dp))
+                    .clickable(onClick = onQuickSelect),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
