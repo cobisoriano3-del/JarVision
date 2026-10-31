@@ -127,8 +127,9 @@ fun ProjectsScreen(
             if (transferWorking || transferMessage != null) {
                 Text(
                     text = if (transferWorking) "Transfer in progress…" else transferMessage.orEmpty(),
-                    color = if (publishError != null || transferMessage?.contains("failed", true) == true)
-                        Color(0xFFFF9A9A) else Color(0xFFA7BEDB),
+                    color = if (transferMessage?.contains("failed", true) == true ||
+                        transferMessage?.contains("could not", true) == true
+                    ) Color(0xFFFF9A9A) else Color(0xFFA7BEDB),
                     style = MaterialTheme.typography.bodySmall,
                     modifier = Modifier.padding(vertical = 6.dp)
                 )
