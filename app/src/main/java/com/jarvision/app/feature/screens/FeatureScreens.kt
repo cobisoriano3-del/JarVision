@@ -157,7 +157,7 @@ fun ProjectsScreen(
                         items(visibleProjects, key = { it.id }) { project -> ProjectCard(project, onClick = { onOpenProject(project) }, onLongClick = { selectedProject = project }) }
                     }
                 }
-            } else {
+            else {
                 Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
                         Surface(Modifier.size(emblemSize), shape = CircleShape, color = Color(0xFF0A1C33), border = BorderStroke(1.dp, Color(0xFF122D49))) {
