@@ -1,7 +1,12 @@
 package com.jarvision.app.ui.navigation
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.draw.clip
+import android.content.Intent
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -105,6 +110,7 @@ private data class MainTab(
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun JarVisionApp() {
+    val context = LocalContext.current
     val navController = rememberNavController()
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route ?: Routes.FILES
@@ -120,6 +126,21 @@ fun JarVisionApp() {
     val workspaceViewModel: WorkspaceViewModel = viewModel()
     val transferViewModel: WorkspaceTransferViewModel = viewModel()
     val transferState by transferViewModel.state.collectAsState()
+    var pendingPublishProjectId by remember { mutableStateOf<String?>(null) }
+    val publishProjectLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree()
+    ) { uri: Uri? ->
+        val projectId = pendingPublishProjectId
+        pendingPublishProjectId = null
+        if (uri != null && projectId != null) {
+            runCatching {
+                val grantFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                    Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                context.contentResolver.takePersistableUriPermission(uri, grantFlags)
+            }
+            transferViewModel.publishProjectToSaf(projectId, uri.toString())
+        }
+    }
     val projects by projectsViewModel.projects.collectAsState()
     val creatingProject by projectsViewModel.isCreating.collectAsState()
     val projectError by projectsViewModel.errorMessage.collectAsState()
@@ -385,7 +406,8 @@ fun JarVisionApp() {
                     onOpenProject = { project -> navigateTo("workspace/${project.id}") },
                     onDeleteProject = { project -> projectsViewModel.deleteProject(project.id) },
                     onBeginPublishProject = { project ->
-                        transferViewModel.openPublishFolderPicker(project.id)
+                        pendingPublishProjectId = project.id
+                        publishProjectLauncher.launch(null)
                     },
                     publishFolderPicker = transferState.publishFolderPicker,
                     onNavigatePublishFolder = transferViewModel::navigatePublishFolderInto,

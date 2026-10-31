@@ -287,7 +287,7 @@ fun WorkspaceScreen(
                         if (multiSelect) {
                             Box {
                                 IconButton(
-                                    enabled = selectedPaths.isNotEmpty() && !state.isWorking && !transferState.isWorking,
+                                    enabled = !state.isWorking && !transferState.isWorking,
                                     onClick = { selectionOperationsExpanded = true }
                                 ) {
                                     Icon(Icons.Filled.GridView, contentDescription = "File operations", tint = WorkspacePalette.AccentLight)

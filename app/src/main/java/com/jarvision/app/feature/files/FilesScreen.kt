@@ -2391,7 +2391,6 @@ private fun FileBrowserToolbar(
                 }
                 Box {
                     IconButton(
-                        enabled = selectionHasItems,
                         onClick = { selectionOperationsExpanded = true }
                     ) {
                         Icon(Icons.Filled.GridView, contentDescription = "File operations", tint = Color.White)
