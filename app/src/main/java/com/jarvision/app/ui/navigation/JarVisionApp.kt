@@ -133,12 +133,16 @@ fun JarVisionApp() {
         val projectId = pendingPublishProjectId
         pendingPublishProjectId = null
         if (uri != null && projectId != null) {
-            runCatching {
+            try {
                 val grantFlags = Intent.FLAG_GRANT_READ_URI_PERMISSION or
                     Intent.FLAG_GRANT_WRITE_URI_PERMISSION
                 context.contentResolver.takePersistableUriPermission(uri, grantFlags)
+                transferViewModel.publishProjectToSaf(projectId, uri.toString())
+            } catch (error: Exception) {
+                transferViewModel.reportError(
+                    error.message ?: "Android did not grant persistent write access to that folder."
+                )
             }
-            transferViewModel.publishProjectToSaf(projectId, uri.toString())
         }
     }
     val projects by projectsViewModel.projects.collectAsState()
@@ -409,11 +413,6 @@ fun JarVisionApp() {
                         pendingPublishProjectId = project.id
                         publishProjectLauncher.launch(null)
                     },
-                    publishFolderPicker = transferState.publishFolderPicker,
-                    onNavigatePublishFolder = transferViewModel::navigatePublishFolderInto,
-                    onNavigatePublishParent = transferViewModel::navigatePublishFolderUp,
-                    onConfirmPublishFolder = transferViewModel::publishProjectToInternalStorage,
-                    onCancelPublishFolder = transferViewModel::closePublishFolderPicker,
                     transferMessage = transferState.message,
                     transferWorking = transferState.isWorking
                 )

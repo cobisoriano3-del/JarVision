@@ -25,8 +25,6 @@ import androidx.compose.material.icons.filled.ArrowForwardIos
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Publish
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ViewWeek
@@ -66,8 +64,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.jarvision.app.ui.components.FeatureStatusScreen
-import com.jarvision.app.data.storage.StorageEntry
-import com.jarvision.app.feature.projects.PublishFolderPickerState
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalFoundationApi::class)
 @Composable
@@ -81,11 +77,6 @@ fun ProjectsScreen(
     onOpenProject: (com.jarvision.app.data.projects.Project) -> Unit = {},
     onDeleteProject: (com.jarvision.app.data.projects.Project) -> Unit = {},
     onBeginPublishProject: (com.jarvision.app.data.projects.Project) -> Unit = {},
-    publishFolderPicker: PublishFolderPickerState? = null,
-    onNavigatePublishFolder: (StorageEntry) -> Unit = {},
-    onNavigatePublishParent: () -> Unit = {},
-    onConfirmPublishFolder: (String, String) -> Unit = { _, _ -> },
-    onCancelPublishFolder: () -> Unit = {},
     transferMessage: String? = null,
     transferWorking: Boolean = false
 ) {
@@ -242,129 +233,6 @@ fun ProjectsScreen(
         }
     }
 
-
-    publishFolderPicker?.let { picker ->
-        ModalBottomSheet(
-            onDismissRequest = onCancelPublishFolder,
-            containerColor = Color(0xFF071B30),
-            contentColor = Color(0xFFF4F7FF),
-            scrimColor = Color.Black.copy(alpha = 0.68f),
-            dragHandle = {
-                Surface(
-                    modifier = Modifier.padding(vertical = 10.dp).size(width = 38.dp, height = 4.dp),
-                    shape = RoundedCornerShape(4.dp),
-                    color = Color(0xFF4778A6)
-                ) {}
-            }
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 660.dp)
-                    .padding(horizontal = 18.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(
-                        onClick = onNavigatePublishParent,
-                        enabled = picker.pathStack.size > 1 && !picker.isLoading && !transferWorking
-                    ) {
-                        Icon(Icons.Filled.ArrowBack, contentDescription = "Parent folder", tint = Color(0xFF65B7FF))
-                    }
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            "Publish project",
-                            color = Color(0xFFF4F7FF),
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        Text(
-                            picker.currentPath,
-                            color = Color(0xFFA7BEDB),
-                            style = MaterialTheme.typography.bodySmall,
-                            maxLines = 2
-                        )
-                    }
-                }
-                Text(
-                    "Choose an internal-storage folder. JarVision will export a copy and keep the original project.",
-                    color = Color(0xFFA7BEDB),
-                    style = MaterialTheme.typography.bodySmall
-                )
-                when {
-                    picker.isLoading -> Box(
-                        Modifier.fillMaxWidth().height(180.dp),
-                        contentAlignment = Alignment.Center
-                    ) { CircularProgressIndicator(color = Color(0xFF65B7FF)) }
-                    picker.errorMessage != null -> Box(
-                        Modifier.fillMaxWidth().heightIn(min = 100.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(picker.errorMessage, color = Color(0xFFFF9A9A), style = MaterialTheme.typography.bodySmall)
-                    }
-                    picker.folders.isEmpty() -> Box(
-                        Modifier.fillMaxWidth().heightIn(min = 100.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text("No subfolders in this location.", color = Color(0xFFA7BEDB))
-                    }
-                    else -> LazyColumn(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp),
-                        contentPadding = PaddingValues(vertical = 4.dp),
-                        verticalArrangement = Arrangement.spacedBy(5.dp)
-                    ) {
-                        items(picker.folders, key = { it.absolutePath ?: it.documentId }) { folder ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clip(RoundedCornerShape(13.dp))
-                                    .clickable(enabled = !transferWorking) { onNavigatePublishFolder(folder) }
-                                    .background(Color(0xFF0A2745))
-                                    .padding(horizontal = 13.dp, vertical = 13.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Filled.FolderOpen, null, tint = Color(0xFF65B7FF))
-                                Spacer(Modifier.width(12.dp))
-                                Text(
-                                    folder.displayName,
-                                    color = Color(0xFFF4F7FF),
-                                    modifier = Modifier.weight(1f),
-                                    maxLines = 1
-                                )
-                                Icon(Icons.Filled.ChevronRight, null, tint = Color(0xFFA7BEDB))
-                            }
-                        }
-                    }
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 18.dp),
-                    horizontalArrangement = Arrangement.End,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    TextButton(
-                        enabled = !transferWorking,
-                        onClick = onCancelPublishFolder
-                    ) { Text("Cancel", color = Color(0xFFA7BEDB)) }
-                    Spacer(Modifier.width(8.dp))
-                    Button(
-                        enabled = picker.canWriteCurrentFolder && !picker.isLoading &&
-                            picker.errorMessage == null && !transferWorking,
-                        onClick = { onConfirmPublishFolder(picker.projectId, picker.currentPath) }
-                    ) {
-                        if (transferWorking) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp,
-                                color = Color.White
-                            )
-                            Spacer(Modifier.width(8.dp))
-                        }
-                        Text("Publish here")
-                    }
-                }
-            }
-        }
-    }
 
     deleteConfirmationProject?.let { project ->
         AlertDialog(
